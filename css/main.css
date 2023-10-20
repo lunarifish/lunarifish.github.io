@@ -1,0 +1,155 @@
+@import url('https://fonts.font.im/css?family=Nunito');
+
+* {
+    padding: 0;
+    margin: 0;
+    transition: all 0.2s ease-in-out;
+}
+
+body {
+    height: 100vh;
+    width: 100vw;
+    font-family: 'Nunito', sans-serif;
+
+    background: linear-gradient(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.8)), url('https://z1.ax1x.com/2023/10/20/piF1SVx.jpg') no-repeat;
+    background-size:100%;
+    background-attachment: fixed;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+main {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+a {
+    text-decoration: none;
+    font-size: 1.125rem;
+    font-weight: 600;
+}
+
+.logo {
+    position: relative;
+    height: 100%;
+    width: 100%;
+    border-radius: 50%;
+    margin-top: 8%;
+    order: -1;
+}
+
+.logoContainer {
+    margin: 1rem 0;
+    position: relative;
+    height: 150px;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    margin-bottom: 2rem;
+}
+
+.mainBox {
+    margin-top: 17vh;
+}
+
+.links {
+    display: flex;
+    flex-direction: column;
+}
+
+.link {
+    height: 2.75rem;
+    width: 600px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #000;
+
+    margin: 0.5rem 0;
+    border-radius: 15px;
+}
+
+.mainTitle {
+    font-size: 2rem;
+    font-weight: 700;
+    color: black;
+}
+
+.sub {
+    font-size: 1rem;
+    font-weight: 50;
+    margin-bottom: 2rem;
+    color: gray;
+}
+
+.about {
+    font-size: 1rem;
+    font-weight: 500;
+    margin-bottom: 2rem;
+    color: black;
+}
+
+.link span {
+    width: 80%;
+    text-align: center;
+}
+
+.link img {
+    height: 2rem;
+    aspect-ratio: 1;
+}
+
+.linkIcon {
+    height: 2rem !important;
+    aspect-ratio: 1;
+}
+
+.ncmIcon {
+    aspect-ratio: 0.5;
+}
+
+.link {
+    font-size: 1rem;
+    background: whitesmoke;
+    color: black;
+    filter: drop-shadow(0px 1px 1px rgba(0, 0, 0, 0.2))
+}
+
+.link:hover {
+    filter: drop-shadow(0px 2px 1px rgba(0, 0, 0, 0.2));
+    transform: scale(1.02);
+    transition: all 0.15s cubic-bezier(0.3, 0.7, 0.2, 1.4);
+}
+
+.link>* {
+    transition: all 0.18s ease-in-out;
+}
+
+.link:hover>* {
+    transform: scale(1.02);
+}
+
+@media (max-width: 600px) {
+    body {
+        background-size: 100%;
+    }
+
+    .logo img {
+        width: 200px;
+    }
+
+    .link span {
+        width: 70%;
+        text-align: center;
+    }
+
+    .link {
+        width: 95vw;
+    }
+
+    .link:hover {
+        transform: scale(1.01);
+    }
+}
