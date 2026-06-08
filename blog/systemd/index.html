@@ -1,0 +1,139 @@
+<!DOCTYPE html><html lang="zh-CN"> <head><!-- Blocking inline script: apply saved theme before first paint to prevent flash --><script>
+      (function() {
+        const t = localStorage.getItem("theme");
+        const d = t === "dark" || (!t && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+        document.documentElement.setAttribute("data-theme", d);
+      })();
+    </script><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta name="generator" content="Astro v6.4.4"><title>systemd杂谈 / lunar aquarium</title><meta name="description" content="pid=1 power"><!-- KaTeX CSS for math rendering --><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css"><meta property="og:title" content="systemd杂谈 — lunar aquarium"><meta property="og:description" content="pid=1 power"><meta property="og:url" content="http://localhost:4321/blog/systemd"><meta property="og:type" content="article"><link rel="stylesheet" href="/_astro/ThemeToggle.Dkwl5BtI.css"></head> <body class="min-h-screen"> <!-- Theme toggle --> <div class="fixed top-3 right-4 z-50"> <style>astro-island,astro-slot,astro-static-slot{display:contents}</style><script>(()=>{var e=async t=>{await(await t())()};(self.Astro||(self.Astro={})).load=e;window.dispatchEvent(new Event("astro:load"));})();</script><script>(()=>{var g=Object.defineProperty;var w=(c,s,d)=>s in c?g(c,s,{enumerable:!0,configurable:!0,writable:!0,value:d}):c[s]=d;var l=(c,s,d)=>w(c,typeof s!="symbol"?s+"":s,d);var E=new Set(["__proto__","constructor","prototype"]);{let c={0:t=>y(t),1:t=>d(t),2:t=>new RegExp(t),3:t=>new Date(t),4:t=>new Map(d(t)),5:t=>new Set(d(t)),6:t=>BigInt(t),7:t=>new URL(t),8:t=>new Uint8Array(t),9:t=>new Uint16Array(t),10:t=>new Uint32Array(t),11:t=>Number.POSITIVE_INFINITY*t},s=t=>{let[p,e]=t;return p in c?c[p](e):void 0},d=t=>t.map(s),y=t=>typeof t!="object"||t===null?t:Object.fromEntries(Object.entries(t).map(([p,e])=>[p,s(e)]));class f extends HTMLElement{constructor(){super(...arguments);l(this,"Component");l(this,"hydrator");l(this,"hydrate",async()=>{var b;if(!this.hydrator||!this.isConnected)return;let e=(b=this.parentElement)==null?void 0:b.closest("astro-island[ssr]");if(e){e.addEventListener("astro:hydrate",this.hydrate,{once:!0});return}let n=this.querySelectorAll("astro-slot"),r={},i=this.querySelectorAll("template[data-astro-template]");for(let o of i){let a=o.closest(this.tagName);a!=null&&a.isSameNode(this)&&(r[o.getAttribute("data-astro-template")||"default"]=o.innerHTML,o.remove())}for(let o of n){let a=o.closest(this.tagName);a!=null&&a.isSameNode(this)&&(r[o.getAttribute("name")||"default"]=o.innerHTML)}let u;try{u=this.hasAttribute("props")?y(JSON.parse(this.getAttribute("props"))):{}}catch(o){let a=this.getAttribute("component-url")||"<unknown>",v=this.getAttribute("component-export");throw v&&(a+=` (export ${v})`),console.error(`[hydrate] Error parsing props for component ${a}`,this.getAttribute("props"),o),o}let h;await this.hydrator(this)(this.Component,u,r,{client:this.getAttribute("client")}),this.removeAttribute("ssr"),this.dispatchEvent(new CustomEvent("astro:hydrate"))});l(this,"unmount",()=>{this.isConnected||this.dispatchEvent(new CustomEvent("astro:unmount"))})}disconnectedCallback(){document.removeEventListener("astro:after-swap",this.unmount),document.addEventListener("astro:after-swap",this.unmount,{once:!0})}connectedCallback(){if(!this.hasAttribute("await-children")||document.readyState==="interactive"||document.readyState==="complete")this.childrenConnectedCallback();else{let e=()=>{document.removeEventListener("DOMContentLoaded",e),n.disconnect(),this.childrenConnectedCallback()},n=new MutationObserver(()=>{var r;((r=this.lastChild)==null?void 0:r.nodeType)===Node.COMMENT_NODE&&this.lastChild.nodeValue==="astro:end"&&(this.lastChild.remove(),e())});n.observe(this,{childList:!0}),document.addEventListener("DOMContentLoaded",e)}}async childrenConnectedCallback(){let e=this.getAttribute("before-hydration-url");e&&await import(e),this.start()}getRetryImportUrl(e){let n=new URL(e,document.baseURI),r=`astro-retry=${Date.now()}`,i=n.hash.replace(/^#/,"");return n.hash=i?`${i}&${r}`:r,n.toString()}async importWithRetry(e){try{return await import(e)}catch(n){return await new Promise(r=>setTimeout(r,1e3)),import(this.getRetryImportUrl(e))}}handleHydrationError(e){let n=this.getAttribute("component-url"),r=new CustomEvent("astro:hydration-error",{cancelable:!0,bubbles:!0,composed:!0,detail:{error:e,componentUrl:n}});this.dispatchEvent(r)&&console.error(`[astro-island] Error hydrating ${n}`,e)}async start(){let e=JSON.parse(this.getAttribute("opts")),n=this.getAttribute("client");if(Astro[n]===void 0){window.addEventListener(`astro:${n}`,()=>this.start(),{once:!0});return}try{await Astro[n](async()=>{let r=this.getAttribute("renderer-url");try{let[i,{default:u}]=await Promise.all([this.importWithRetry(this.getAttribute("component-url")),r?this.importWithRetry(r):Promise.resolve({default:()=>()=>{}})]),h=this.getAttribute("component-export")||"default";if(h.includes(".")){this.Component=i;for(let m of h.split(".")){if(E.has(m)||!this.Component||typeof this.Component!="object"&&typeof this.Component!="function"||!Object.hasOwn(this.Component,m))throw new Error(`Invalid component export path: ${h}`);this.Component=this.Component[m]}}else{if(E.has(h))throw new Error(`Invalid component export path: ${h}`);this.Component=i[h]}return this.hydrator=u,this.hydrate}catch(i){return this.handleHydrationError(i),()=>{}}},e,this)}catch(r){this.handleHydrationError(r)}}attributeChangedCallback(){this.hydrate()}}l(f,"observedAttributes",["props"]),customElements.get("astro-island")||customElements.define("astro-island",f)}})();</script><astro-island uid="Z15wszf" prefix="r2" component-url="/_astro/ThemeToggle.B3yvtbfi.js" component-export="default" renderer-url="/_astro/client.eKqKFjHn.js" props="{}" ssr client="load" opts="{&quot;name&quot;:&quot;ThemeToggle&quot;,&quot;value&quot;:true}" await-children><button aria-label="切换到浅色模式" class="_toggle_1ww35_1"><span class="_icon_1ww35_32"><svg stroke="currentColor" fill="none" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" height="14" width="14" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg></span><span class="_track_1ww35_12"><span class="_thumb_1ww35_23"></span></span><span class="_icon_1ww35_32"><svg stroke="currentColor" fill="none" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" height="14" width="14" xmlns="http://www.w3.org/2000/svg"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg></span></button><!--astro:end--></astro-island> </div> <!-- Table of Contents — fixed on the left when space allows --> <astro-island uid="ZF3g8k" prefix="r3" component-url="/_astro/TableOfContents.DL6dcQqx.js" component-export="default" renderer-url="/_astro/client.eKqKFjHn.js" props="{&quot;headings&quot;:[1,[[0,{&quot;depth&quot;:[0,2],&quot;slug&quot;:[0,&quot;systemd-networkd&quot;],&quot;text&quot;:[0,&quot;systemd-networkd&quot;]}],[0,{&quot;depth&quot;:[0,3],&quot;slug&quot;:[0,&quot;socketcan自动bringup&quot;],&quot;text&quot;:[0,&quot;socketcan自动bringup&quot;]}],[0,{&quot;depth&quot;:[0,2],&quot;slug&quot;:[0,&quot;udev&quot;],&quot;text&quot;:[0,&quot;udev&quot;]}],[0,{&quot;depth&quot;:[0,3],&quot;slug&quot;:[0,&quot;固定usb设备自动赋权&quot;],&quot;text&quot;:[0,&quot;固定USB设备+自动赋权&quot;]}],[0,{&quot;depth&quot;:[0,2],&quot;slug&quot;:[0,&quot;systemdservice&quot;],&quot;text&quot;:[0,&quot;systemd.service&quot;]}],[0,{&quot;depth&quot;:[0,3],&quot;slug&quot;:[0,&quot;开机自启&quot;],&quot;text&quot;:[0,&quot;开机自启&quot;]}],[0,{&quot;depth&quot;:[0,3],&quot;slug&quot;:[0,&quot;不启动桌面环境&quot;],&quot;text&quot;:[0,&quot;不启动桌面环境&quot;]}],[0,{&quot;depth&quot;:[0,2],&quot;slug&quot;:[0,&quot;systemd-analyze&quot;],&quot;text&quot;:[0,&quot;systemd-analyze&quot;]}],[0,{&quot;depth&quot;:[0,3],&quot;slug&quot;:[0,&quot;分析开机时间&quot;],&quot;text&quot;:[0,&quot;分析开机时间&quot;]}]]]}" ssr client="load" opts="{&quot;name&quot;:&quot;TableOfContents&quot;,&quot;value&quot;:true}" await-children><aside class="hidden xl:block fixed left-[max(1rem,calc((100vw-60rem)/2-16rem))] top-32 w-52 z-40"><nav class="relative" aria-label="目录"><div class="absolute left-0 top-0 w-[2px] rounded-full" style="background:var(--color-text)"></div><ul class="space-y-0.5 pl-3"><li style="padding-left:0rem"><a href="#systemd-networkd" class="block text-sm leading-relaxed py-1 transition-colors duration-150" style="color:var(--color-text-muted);font-weight:400">systemd-networkd</a></li><li style="padding-left:0.75rem"><a href="#socketcan自动bringup" class="block text-sm leading-relaxed py-1 transition-colors duration-150" style="color:var(--color-text-muted);font-weight:400">socketcan自动bringup</a></li><li style="padding-left:0rem"><a href="#udev" class="block text-sm leading-relaxed py-1 transition-colors duration-150" style="color:var(--color-text-muted);font-weight:400">udev</a></li><li style="padding-left:0.75rem"><a href="#固定usb设备自动赋权" class="block text-sm leading-relaxed py-1 transition-colors duration-150" style="color:var(--color-text-muted);font-weight:400">固定USB设备+自动赋权</a></li><li style="padding-left:0rem"><a href="#systemdservice" class="block text-sm leading-relaxed py-1 transition-colors duration-150" style="color:var(--color-text-muted);font-weight:400">systemd.service</a></li><li style="padding-left:0.75rem"><a href="#开机自启" class="block text-sm leading-relaxed py-1 transition-colors duration-150" style="color:var(--color-text-muted);font-weight:400">开机自启</a></li><li style="padding-left:0.75rem"><a href="#不启动桌面环境" class="block text-sm leading-relaxed py-1 transition-colors duration-150" style="color:var(--color-text-muted);font-weight:400">不启动桌面环境</a></li><li style="padding-left:0rem"><a href="#systemd-analyze" class="block text-sm leading-relaxed py-1 transition-colors duration-150" style="color:var(--color-text-muted);font-weight:400">systemd-analyze</a></li><li style="padding-left:0.75rem"><a href="#分析开机时间" class="block text-sm leading-relaxed py-1 transition-colors duration-150" style="color:var(--color-text-muted);font-weight:400">分析开机时间</a></li></ul></nav></aside><!--astro:end--></astro-island> <main class="mx-auto max-w-3xl px-6 py-12 sm:py-20"> <!-- Back link --> <a href="/blog" class="inline-block text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors mb-10">
+← /blog
+</a> <!-- Post header --> <header class="mb-12"> <h1 class="text-2xl sm:text-5xl font-bold leading-tight tracking-tight mb-4"> systemd杂谈 </h1> <p class="text-base sm:text-lg text-[var(--color-text-muted)] leading-relaxed mb-6 max-w-2xl"> pid=1 power </p> <div class="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-[var(--color-text-muted)] pb-6 border-b border-[var(--color-border-dim)]"> <time datetime="2024-12-05T00:00:00.000Z"> 2024/12/05 </time> <span class="flex flex-wrap gap-x-3 gap-y-1"> <span class="tracking-wide">embedded</span><span class="tracking-wide">linux</span> </span> </div> </header> <!-- Post content --> <div class="prose max-w-none">  <ul>
+<li>
+<p>程序要开机自启</p>
+</li>
+<li>
+<p>在linux下使用串口、socketcan时总是免不了要先打一大堆命令赋权、启动</p>
+</li>
+<li>
+<p>有多个usb设备的情况下不好区分谁是谁，设备文件顺序还会变</p>
+</li>
+</ul>
+<p>利用好当今大多数发行版都有的<a href="https://github.com/systemd/systemd"><code>systemd</code></a>，它的子组件如udev、systemd-networkd等等就可以解决这些麻烦问题。</p>
+<p>如果以后遇到类似的问题，那systemd大概率也是有办法解决的。不要小看PID=1的力量。:)))</p>
+<p><img src="https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=OTA2NTBkMTk3ZDNiOGQ3M2VmNzg5OTUwNmMzZWU1OThfNGNmYjU4NjZlM2NlOTM2ZGMyMDIwODNkOTAzOGJlMDhfSUQ6NzQ0NDc3NzcxNzkyMDAzODk0MF8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM" alt="Image"/></p>
+<h2 id="systemd-networkd">systemd-networkd</h2>
+<h3 id="socketcan自动bringup">socketcan自动bringup</h3>
+<p>详情：<a href="https://wiki.archlinuxcn.org/wiki/Systemd-networkd">https://wiki.archlinuxcn.org/wiki/Systemd-networkd</a></p>
+<p>systemd-networkd用来按规则自动配置netdev，正巧can在linux下就是netdev</p>
+<p>systemd-networkd虽然可以配置netdev，但不要举一反三去用它配置以太网接口。目前大多数linux发行版都用另外一个叫NetworkManager的软件来管理网络，同时使用两个软件管理网络可能会引起一些奇怪问题。</p>
+<p>为什么不用NetworkManager管理CAN接口？因为它没有这个功能。</p>
+<blockquote>
+<p>2025/9/17更新：Ubuntu的最新LTS版本24默认使用netplan作为前端来管理网络了</p>
+</blockquote>
+<p>输入<code>systemctl status systemd-networkd</code>查看<code>systemd-networkd</code>有没有启动：</p>
+<p><img src="https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YmQ2ZDdjOWQzOGJjNzU3OWE5MWFhZDljNjdmN2ZkODVfMDgxZjRkMTI4ODE2ZWQyZDFiYWIzNzdjMjcyMjZmODdfSUQ6NzQ0NDc2MTYyMzI2NjU1Nzk1Nl8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM" alt="Image"/></p>
+<p>如果显示inactive则输入<code>systemctl start systemd-networkd</code>启动服务，再输入<code>systemctl enable systemd-networkd</code>让服务开机自启。</p>
+<p><img src="https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YmM5MmZjZWM4N2Q4M2FjYTU0MDMwZjZlY2JlZDJlZDBfOTlhNTQ3MTFiYTU1MWRjNDBmYjVlMDEyMzZiOTk5MGFfSUQ6NzQ0NDc2MTkzNTQ0MDM2MzUyMl8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM" alt="Image"/></p>
+<p>在<code>/etc/systemd/network/</code>文件夹下建立规则<code>80-can.network</code>如下：</p>
+<pre class="astro-code astro-code-themes light-plus min-dark" style="background-color:#FFFFFF;--shiki-dark-bg:#1f1f1f;color:#000000;--shiki-dark:#b392f0;overflow-x:auto" tabindex="0" data-language="plaintext"><code><span class="line"><span>[Match]</span></span>
+<span class="line"><span>Name=can*</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span>[CAN]</span></span>
+<span class="line"><span>BitRate=1M</span></span></code></pre>
+<p>此时系统就会自动按规则配置所有CAN接口波特率为1M，并且启动他们，不需要再手动<code>ip link set</code>了。</p>
+<p>重启一次系统查看效果，如果不想重启，则重启一次systemd-networkd服务：<code>systemctl restart systemd-networkd</code></p>
+<h2 id="udev">udev</h2>
+<p>udev可以捕获内核产生的设备添加/移除事件，按配置的规则根据端口号、PID、VID等等信息自动识别并配置设备（赋权、创建符号链接等等）</p>
+<p>详情：<a href="https://www.jinbuguo.com/systemd/udev.html">https://www.jinbuguo.com/systemd/udev.html</a></p>
+<h3 id="固定usb设备自动赋权">固定USB设备+自动赋权</h3>
+<p>USB设备都有VID(Vendor ID)和PID(Product ID)两个识别符，输入<code>lsusb</code>列出目前插入的所有usb设备：</p>
+<p><img src="https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YmNiZDVhOGVlNjQ3ZjA3NzQ3MWFkOTc5MDM0MDQwNWJfMjcyN2NiNGZiY2E2ODc5NWQ1Y2FlOTY0NDIwMWZlMmNfSUQ6NzQ0NDc2NjI3NTg4NzAzODQ2NV8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM" alt="Image"/></p>
+<p>以<code>Bus 001 Device 003: ID 8087:0029 Intel Corp. AX200 Bluetooth</code>为例：</p>
+<ul>
+<li>
+<p>busnum=1</p>
+</li>
+<li>
+<p>devicenum=3</p>
+</li>
+<li>
+<p>vid=8087</p>
+</li>
+<li>
+<p>pid=0029</p>
+</li>
+</ul>
+<p>一般来说只根据vid和pid就可以确定一个唯一的usb设备，但如果有两个完全一样的usb设备，就还需要额外根据busnum和devicenum来确定一个唯一的设备。</p>
+<p>假设现在有一个usb转串口的CH340模块吧：</p>
+<p><img src="https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ZjQ1Nzk3ZTg5YzZjNGRmNGI3MzdlZjQ1YzBiOGI4ODFfYWQxMWZhMGU4MzA0Y2MxYmVmZjQ1MmJkYjJjN2U0ZjVfSUQ6NzQ0NDc3OTkyNzY4OTQ0NTQwNF8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM" alt="Image"/></p>
+<p><img src="https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MGRjNzkyMTdkZjE2YjQ3NWFhZjEyOGFjNGVkZDIxZTJfZTIwZDY0NzA4ZDQzYWEyMDAxMzk3N2IxZDc4ZWI5OWVfSUQ6NzQ0NDc4MDA2OTU3NzM0Mjk4MF8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM" alt="Image"/></p>
+<p>每次使用它之前，都要输入<code>sudo chmod 666 /dev/ttyUSB0</code>来赋权，而且如果有多个一样的模块，就要指定赋权<strong>插在某个USB端口上的，PID为多少，VID为多少</strong>的设备，仅仅通过<code>/dev</code>下的文件名肯定是区分不开的。</p>
+<p>在<code>/etc/udev/rules.d/</code>文件夹下建立规则<code>100-usbserial.rules</code>如下：</p>
+<pre class="astro-code astro-code-themes light-plus min-dark" style="background-color:#FFFFFF;--shiki-dark-bg:#1f1f1f;color:#000000;--shiki-dark:#b392f0;overflow-x:auto" tabindex="0" data-language="plaintext"><code><span class="line"><span>KERNEL==&quot;ttyUSB*&quot;,</span></span>
+<span class="line"><span>ATTRS{busnum}==&quot;1&quot;,</span></span>
+<span class="line"><span>ATTRS{devnum}==&quot;8&quot;,</span></span>
+<span class="line"><span>ATTRS{idVendor}==&quot;1a86&quot;,</span></span>
+<span class="line"><span>ATTRS{idProduct}==&quot;7523&quot;,</span></span>
+<span class="line"><span>MODE:=&quot;0666&quot;,</span></span>
+<span class="line"><span>GROUP:=&quot;dialout&quot;,</span></span>
+<span class="line"><span>SYMLINK+=&quot;my_usb_serial&quot;</span></span></code></pre>
+<p>刷新udev：</p>
+<pre class="astro-code astro-code-themes light-plus min-dark" style="background-color:#FFFFFF;--shiki-dark-bg:#1f1f1f;color:#000000;--shiki-dark:#b392f0;overflow-x:auto" tabindex="0" data-language="plaintext"><code><span class="line"><span>udevadm control --reload</span></span>
+<span class="line"><span>udevadm trigger</span></span></code></pre>
+<p>此时在<code>/dev</code>里可以看到一个叫<code>my_usb_serial</code>的文件，它就是经过udev配置之后的，之前看到的<code>ttyUSB0</code>。之后每次插入符合规则的usb设备时，这个文件都会立即出现。</p>
+<p><img src="https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NjMxZTNjYTczNTQ1MTFmMmIzOTYxOWMzOWI4NDhjZTNfYjQwOGYxY2JmMmEwOTdiYWUzYmNlNjNhZWM0MGIxNjBfSUQ6NzQ0NDc4NDcxODcwNjYwNjA5OV8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM" alt="Image"/></p>
+<p>同理也可以利用udev固定USB转CAN模块，像下面这样，就可以在<code>busnum=3, devnum=7</code>的usb转can模块插入之后创建一个叫<code>my_usb_can</code>的网络接口：</p>
+<pre class="astro-code astro-code-themes light-plus min-dark" style="background-color:#FFFFFF;--shiki-dark-bg:#1f1f1f;color:#000000;--shiki-dark:#b392f0;overflow-x:auto" tabindex="0" data-language="plaintext"><code><span class="line"><span>ACTION==&quot;add&quot;,</span></span>
+<span class="line"><span>SUBSYSTEM==&quot;net&quot;,</span></span>
+<span class="line"><span>KERNEL==&quot;can*&quot;,</span></span>
+<span class="line"><span>ATTRS{busnum}==&quot;3&quot;,</span></span>
+<span class="line"><span>ATTRS{devnum}==&quot;7&quot;,</span></span>
+<span class="line"><span>NAME+=&quot;my_usb_can&quot;,</span></span>
+<span class="line"><span>GROUP:=&quot;dialout&quot;</span></span></code></pre>
+<h2 id="systemdservice">systemd.service</h2>
+<p>详情：<a href="https://www.jinbuguo.com/systemd/systemd.service.html">https://www.jinbuguo.com/systemd/systemd.service.html</a></p>
+<h3 id="开机自启">开机自启</h3>
+<p>把要开机自启的动作编写成一个service，注册给systemd即可实现可控、稳定的开机自启以及fail retry。</p>
+<p>比如要让一个ROS节点自启，并且崩溃之后可以自己尝试再自启的话，就先写这样一个启动脚本：</p>
+<pre class="astro-code astro-code-themes light-plus min-dark" style="background-color:#FFFFFF;--shiki-dark-bg:#1f1f1f;color:#000000;--shiki-dark:#b392f0;overflow-x:auto" tabindex="0" data-language="plaintext"><code><span class="line"><span>#!/usr/bin/bash</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span>## /home/a/ws/launch.sh</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span>source /opt/ros/humble/setup.bash</span></span>
+<span class="line"><span>source /home/a/ws/install/setup.bash</span></span>
+<span class="line"><span>ros2 launch bringup_pkg bringup.launch.py</span></span></code></pre>
+<p>然后，编写服务文件<code>control_node.service</code></p>
+<ul>
+<li>
+<p><code>After=network.target</code>：在系统启动阶段达到<code>network</code>目标之后启动这个服务</p>
+</li>
+<li>
+<p><code>ExecStart=/home/a/ws/launch.sh</code>：设置entry为启动脚本<code>/home/a/ws/launch.sh</code></p>
+</li>
+<li>
+<p><code>Restart=always</code>：自动重启</p>
+</li>
+</ul>
+<pre class="astro-code astro-code-themes light-plus min-dark" style="background-color:#FFFFFF;--shiki-dark-bg:#1f1f1f;color:#000000;--shiki-dark:#b392f0;overflow-x:auto" tabindex="0" data-language="plaintext"><code><span class="line"><span>[Unit]</span></span>
+<span class="line"><span>After=network.target</span></span>
+<span class="line"><span> </span></span>
+<span class="line"><span>[Service]</span></span>
+<span class="line"><span>Type=oneshot</span></span>
+<span class="line"><span>ExecStart=/home/a/ws/launch.sh</span></span>
+<span class="line"><span>Restart=always</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span></span></span>
+<span class="line"><span>[Install]</span></span>
+<span class="line"><span>WantedBy=multi-user.target</span></span></code></pre>
+<p>把这个<code>control_node.service</code>复制到<code>/usr/lib/systemd/system</code>目录下，然后执行<code>systemd daemon-reload</code>重启systemd daemon。</p>
+<p>此时执行<code>systemctl status control_node</code>就可以看到注册的服务了：</p>
+<p><img src="https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NGI5NDYyOWFiM2ViZWYzMDEyZTVkZDE0YWMzMDhkMDhfNDdjYTU3ZTkxM2I5N2U0NzIwZDUyZDUwZDY0YTYzYjdfSUQ6NzQ0NDc4OTk5NTI4NTAzNzA4NF8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM" alt="Image"/></p>
+<p>执行<code>systemctl start control_node</code>即可启动服务，执行<code>systemctl enable control_node</code>即可让服务开机自启。</p>
+<h3 id="不启动桌面环境">不启动桌面环境</h3>
+<p>为了节省性能，或者是为了加快开机速度等等，可以修改systemd的默认启动target为<code>multi-user.target</code>，只启动到终端环境里：</p>
+<pre class="astro-code astro-code-themes light-plus min-dark" style="background-color:#FFFFFF;--shiki-dark-bg:#1f1f1f;color:#000000;--shiki-dark:#b392f0;overflow-x:auto" tabindex="0" data-language="plaintext"><code><span class="line"><span>systemctl set-default multi-user.target</span></span></code></pre>
+<p>如果要恢复桌面环境，把默认target改回<code>graphical.target即可</code>：</p>
+<pre class="astro-code astro-code-themes light-plus min-dark" style="background-color:#FFFFFF;--shiki-dark-bg:#1f1f1f;color:#000000;--shiki-dark:#b392f0;overflow-x:auto" tabindex="0" data-language="plaintext"><code><span class="line"><span>systemctl set-default graphical.target</span></span></code></pre>
+<h2 id="systemd-analyze">systemd-analyze</h2>
+<h3 id="分析开机时间">分析开机时间</h3>
+<p>todo</p>  </div> <!-- Footer credit --> <p class="mt-16 text-xs text-[var(--color-text-muted)]">
+&copy; 2026 lunari io </p> </main> </body></html>
