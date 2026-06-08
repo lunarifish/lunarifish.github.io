@@ -1,0 +1,129 @@
+---
+title: "STM32嵌入式编程的内存管理技巧"
+description: "No more hardfault!"
+date: 2026-05-14
+tags:
+  - embedded
+  - stm32
+---
+
+## 引言：为什么嵌入式系统需要“内存确定性”？
+
+在RM参赛三年的记忆里，尤其是前两年，嵌入式组的所有人都会频繁的遇到所谓”内存跑飞了，进hardfault“之类的玄学问题，发现问题事后的处理方式只是简单的在CubeMX里把那个"minimum heap size"调大，问题解决万事大吉，问题不解决回退代码，根因从来没有考虑过。
+
+在PC软件开发中，内存可以近似视为无穷多，巨大的缓冲区/对象、动态分配（`malloc`/`new`）是常态，也不会出什么问题。但在STM32等这种嵌入式系统中，内存不仅稀缺（STM32H7这种高性能型号也只有128K内存，F4/F1更少），而且很脆弱，需要精打细算。
+
+## 程序的内存布局
+
+一个典型的GNU ARM程序在内存中的布局如下：
+
+```SQL
++------------------+ 低地址 (0x20000000)
+|   .data          | <-- 已初始化的全局/静态变量 (占用Flash和RAM)
++------------------+
+|   .bss           | <-- 未初始化的全局/静态变量 (仅占用RAM，启动时清零)
++------------------+
+|   Heap (堆)      | <-- 向高地址增长 (malloc/new 分配的区域)
+|                  |
++------------------+
+|                  |
+|   Stack (栈)     | <-- 向低地址增长 (局部变量、函数调用上下文)
++------------------+ 高地址 (RAM顶部)
+
+```
+
+在CubeMX的Memory Management模块里，可以看到STM32的内存映射。
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NTdjYzYxMTI5MmU4N2NhODJkMmVkZmM4ODcyNzgxZjlfZWY5Njk3NzQxZDY2ZmY0NWI5Y2MwYWE5M2VlNzNmYWVfSUQ6NzYzOTQyNzA0NTk0NDEwMjA3NF8xNzgwOTQ0NDIwOjE3ODEwMzA4MjBfVjM)
+
+## 各内存区段在C/C\+\+代码里的表现形式
+
+|               | 物理位置          | 存什么数据                                                                                                                                                                           |
+| ------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| \.text段<br/> | Flash（ROM）<br/> | - 所有的函数体代码。<br/>- 字符串常量（如 `printf("Hello World\n");` 中的 `"Hello World\n"`）。<br/>- 被 `const` 修饰的全局变量或 `static` 局部变量。                                |
+| \.data段      | Flash和ROM        | 程序烧录在Flash中，在单片机上电启动时，启动代码会将这部分数据从Flash拷贝到RAM中，之后程序在RAM中读写它。<br/>- 初始化为非零值的全局变量。<br/>- 初始化为非零值的 `static` 局部变量。 |
+| \.bss段       | RAM               | - 未初始化的全局变量。<br/>- 初始化为零值的全局变量（如 `int sensor_value = 0;`，编译器会智能地将其归入`.bss`而非`.data`）。<br/>- 未初始化或初始化为零值的 `static` 局部变量。      |
+| 堆<br/>       | RAM               | - 调用C语言的 `malloc()`, `calloc()`, `realloc()` 分配的内存。<br/>- 调用C\+\+的 `new` 操作符分配的内存。                                                                            |
+| 栈            | RAM               | - 函数内部的局部变量（非static修饰）。<br/>- 函数的参数传递（在ARM架构中，前几个参数用寄存器传递，超出部分压栈）。<br/>- 函数调用的返回地址、中断发生时的上下文保存。                |
+
+举个例子，下面不同的实例化一个对象的方式，会把这个对象放到不同的内存区域：
+
+- `Sensor s1;` （局部对象）： 栈
+
+- `static Sensor s2;` （静态局部/全局对象）： `.bss` 或 `.data`
+
+- `Sensor *s3 = new Sensor();` （动态对象）： 堆
+
+- `Sensor *s4 = new (buffer) Sensor();` （placement new）： 取决于 `buffer` 所在的区段
+
+## 几个内存问题引发的暗坑
+
+### 堆栈溢出
+
+第1节提到，堆栈二者共存在同一块物理内存空间里，栈向下生长，堆向上生长。
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YmEwZDRkOTNjMDBmYTVkMjE0MzA5M2I0MzRjN2U5M2NfM2MyZGY3MTM5MWM3NmUxMzdlMzhlMWE1ODEyZDA4NjFfSUQ6NzYzOTQzMDcxNzQzMjIzNzI1MV8xNzgwOTQ0NDIwOjE3ODEwMzA4MjBfVjM)
+
+每调用一次`new()`，堆就会生长一点；每调用一个函数，调用栈和局部变量就会使得栈生长一点。如果两者相遇，数据就会被互相覆盖，引发诡异的问题。或者更常见的情况是，STM32的保护机制会触发Hardfault中断把程序杀死，防止发生一些危险的情况。
+
+### 堆内存碎片
+
+https://zhuanlan.zhihu.com/p/589406667
+
+### 不可静态分析
+
+如果要对内存精打细算，首先得对程序的内存占用有定量的认识。在编译完成后，链接器会抛出一段静态分析，理想情况下，这些信息确实能代表程序内存占用情况：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YmIwMzZlNzcyMjM4YTM3NDNmMzQwNDk3MTJiYmNkYWJfZTcwMDg4ZjkwYTMxZmM5YmRmMjRkYmMzNGY5MjUyZDNfSUQ6NzYzOTQzNTQzNDAwNjgwOTc5M18xNzgwOTQ0NDIwOjE3ODEwMzA4MjBfVjM)
+
+有时候这里的RAM占用很小，但是程序依旧跑死。实际上是因为这种静态内存分析只能分析到编译期就可以确定大小的内存，比如全局变量、static变量。链接器没办法知道程序跑起来会调用哪些函数、调用几次new，当然也没办法确切知道程序会用多少内存。
+
+## 核心原则
+
+从以上分析可以得出，嵌入式场景下的内存管理：
+
+- **确定性强的是好的，确定性弱的是坏的。**
+
+- **编译期确定是好的，运行时确定是坏的。**
+
+把每一个字节的内存牢牢把握在自己手里，而不是晕乎乎的调用vector\.push_back，new，却不知道这些东西在对内存做什么操作。
+
+## 用几种好的实践规避以上问题
+
+### 不用`new`、`malloc`
+
+1. 动态分配最明显的问题就是会导致内存碎片。
+
+2. 此外，由于动态分配还会触发C标准库的分配算法，它会遍历空闲链表寻找合适的内存块，而这个算法的执行时间不可预测，所以可能会打破程序的实时性。
+
+3. 我见到很多这种写法：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MjBjZDQ1NzljN2JhZGM0NzYxY2JiMWI1ZTMxZjI1Y2FfM2Q0MTY0NGM3ZjM1NGQ5ODY4OGQxYWI3M2Q4ZThlNDRfSUQ6NzYzOTQzOTIyMjkyMjg3MzgxNl8xNzgwOTQ0NDIwOjE3ODEwMzA4MjBfVjM)
+
+这样写会导致`Globals`这个结构体根本没法被静态分析。不管`MahonyAhrs`、`PID`两个类多大，`Globals`的大小永远是两个指针的大小，8字节：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ZWU3Yjc3NjlhOGIwM2I2MTM0MWQ4ZGY1YzE2YzM3NWVfNDgzNTlmMjQzYmZhNTJmMjg4MzUyMDE4YWJiN2VhNmVfSUQ6NzYzOTQ0Mjc1Mjg3NDMzNTE5OV8xNzgwOTQ0NDIwOjE3ODEwMzA4MjBfVjM)
+
+这种写法不是好的风格，完全不值得提倡。即使有时候需要用到，也是因为`librm`早期设计考虑不足，某些对象需要等HAL库初始化完成之后再构造，是作为一种延迟初始化的手段。
+
+如果用正常的写法，可以清楚的看到`Globals`占用了888字节内存：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MDlhZTI2YWE3NmExYWQ3NmUzMWFhZDMwNmE4OTMzYjdfN2FjYTBiZGJmNGMxMzE5ZjIwYmIyOWU0NzBlN2ZjZjRfSUQ6NzYzOTQ0MjY0NzI0MDgyMTY5Nl8xNzgwOTQ0NDIwOjE3ODEwMzA4MjBfVjM)
+
+### 不用STL容器
+
+ETL库作为一个强调内存确定性的STL替代，已经整合在librm里，随时可用。如果一定要用STL容器，就去用ETL里的替代品：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MGI3ZjU1MDVlM2Y4NjQ4ZWJmNzk0NGViMjEwYTljYThfNzAyMGNhZWIwMDdmMTJmNjMyODdjZTQ2NmIzYzZhY2RfSUQ6NzYzOTQ0MzcxMTAwMDEzNjkwN18xNzgwOTQ0NDIwOjE3ODEwMzA4MjBfVjM)
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=OGFiYTVlZjVkNjY1OTU3OWViZTJjMzY1NTEyMjMwNTdfNTY4MTY3MDRiZTY0ZmM3MmZlMzRkMTc5YTRmZGQ0ZGNfSUQ6NzYzOTQ0Mzc1NzQzOTUxOTk0M18xNzgwOTQ0NDIwOjE3ODEwMzA4MjBfVjM)
+
+### placement new
+
+如果因为一些初始化时序问题，非要用new不可，比如这样，那`Globals`用到的这块内存其实依旧是运行期确定的，不会被链接器算进内存占用。可以做一个实验，有没有`globals = new Globals;`这行代码，编译完成之后输出的内存占用都是一样的。
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NmVjNjUzZjg3MTdhZmQ3ODcxMWI1NzUxOGJkNzU0NWFfNDA2MGI4NmM2Yzc5OTQyN2YwMTI5YzJiMGE1MTVlMGZfSUQ6NzYzOTQ0NjA4Njk0NzUwNzE3M18xNzgwOTQ0NDIwOjE3ODEwMzA4MjBfVjM)
+
+C\+\+有一项功能叫"placement new"，顾名思义，就是可以把对象new在一个确定的位置，而不是让C标准库自己随便在堆区分配一个位置。建一个大小和`Globals`相同的全局uint8数组，然后把`Globals`放进去，这样编译期就可以计算这块全局区域的大小，也达成了延迟初始化的目的：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MmQ3Nzc1ZDcxNzI3MmMzNWJlZTliNjBkY2U3YjQ0YTNfNmNmZjk0NWQ5ODVjNTdkNjg2Y2QxYzQ0NzNmNjZiNTBfSUQ6NzYzOTQ0NjA0NTUyMDQ0ODQ1NV8xNzgwOTQ0NDIwOjE3ODEwMzA4MjBfVjM)

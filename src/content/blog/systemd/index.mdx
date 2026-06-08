@@ -1,0 +1,194 @@
+---
+title: "systemd杂谈"
+description: "pid=1 power"
+date: 2024-12-05
+tags:
+  - embedded
+  - linux
+---
+
+- 程序要开机自启
+
+- 在linux下使用串口、socketcan时总是免不了要先打一大堆命令赋权、启动
+
+- 有多个usb设备的情况下不好区分谁是谁，设备文件顺序还会变
+
+利用好当今大多数发行版都有的[`systemd`](https://github.com/systemd/systemd)，它的子组件如udev、systemd-networkd等等就可以解决这些麻烦问题。
+
+如果以后遇到类似的问题，那systemd大概率也是有办法解决的。不要小看PID=1的力量。:)))
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=OTA2NTBkMTk3ZDNiOGQ3M2VmNzg5OTUwNmMzZWU1OThfNGNmYjU4NjZlM2NlOTM2ZGMyMDIwODNkOTAzOGJlMDhfSUQ6NzQ0NDc3NzcxNzkyMDAzODk0MF8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM)
+
+## systemd-networkd
+
+### socketcan自动bringup
+
+详情：https://wiki.archlinuxcn.org/wiki/Systemd-networkd
+
+systemd-networkd用来按规则自动配置netdev，正巧can在linux下就是netdev
+
+systemd-networkd虽然可以配置netdev，但不要举一反三去用它配置以太网接口。目前大多数linux发行版都用另外一个叫NetworkManager的软件来管理网络，同时使用两个软件管理网络可能会引起一些奇怪问题。
+
+为什么不用NetworkManager管理CAN接口？因为它没有这个功能。
+
+> 2025/9/17更新：Ubuntu的最新LTS版本24默认使用netplan作为前端来管理网络了
+
+输入`systemctl status systemd-networkd`查看`systemd-networkd`有没有启动：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YmQ2ZDdjOWQzOGJjNzU3OWE5MWFhZDljNjdmN2ZkODVfMDgxZjRkMTI4ODE2ZWQyZDFiYWIzNzdjMjcyMjZmODdfSUQ6NzQ0NDc2MTYyMzI2NjU1Nzk1Nl8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM)
+
+如果显示inactive则输入`systemctl start systemd-networkd`启动服务，再输入`systemctl enable systemd-networkd`让服务开机自启。
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YmM5MmZjZWM4N2Q4M2FjYTU0MDMwZjZlY2JlZDJlZDBfOTlhNTQ3MTFiYTU1MWRjNDBmYjVlMDEyMzZiOTk5MGFfSUQ6NzQ0NDc2MTkzNTQ0MDM2MzUyMl8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM)
+
+在`/etc/systemd/network/`文件夹下建立规则`80-can.network`如下：
+
+```Plain Text
+[Match]
+Name=can*
+
+[CAN]
+BitRate=1M
+```
+
+此时系统就会自动按规则配置所有CAN接口波特率为1M，并且启动他们，不需要再手动`ip link set`了。
+
+重启一次系统查看效果，如果不想重启，则重启一次systemd-networkd服务：`systemctl restart systemd-networkd`
+
+## udev
+
+udev可以捕获内核产生的设备添加/移除事件，按配置的规则根据端口号、PID、VID等等信息自动识别并配置设备（赋权、创建符号链接等等）
+
+详情：https://www.jinbuguo.com/systemd/udev.html
+
+### 固定USB设备+自动赋权
+
+USB设备都有VID(Vendor ID)和PID(Product ID)两个识别符，输入`lsusb`列出目前插入的所有usb设备：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YmNiZDVhOGVlNjQ3ZjA3NzQ3MWFkOTc5MDM0MDQwNWJfMjcyN2NiNGZiY2E2ODc5NWQ1Y2FlOTY0NDIwMWZlMmNfSUQ6NzQ0NDc2NjI3NTg4NzAzODQ2NV8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM)
+
+以`Bus 001 Device 003: ID 8087:0029 Intel Corp. AX200 Bluetooth`为例：
+
+- busnum=1
+
+- devicenum=3
+
+- vid=8087
+
+- pid=0029
+
+一般来说只根据vid和pid就可以确定一个唯一的usb设备，但如果有两个完全一样的usb设备，就还需要额外根据busnum和devicenum来确定一个唯一的设备。
+
+假设现在有一个usb转串口的CH340模块吧：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ZjQ1Nzk3ZTg5YzZjNGRmNGI3MzdlZjQ1YzBiOGI4ODFfYWQxMWZhMGU4MzA0Y2MxYmVmZjQ1MmJkYjJjN2U0ZjVfSUQ6NzQ0NDc3OTkyNzY4OTQ0NTQwNF8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM)
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MGRjNzkyMTdkZjE2YjQ3NWFhZjEyOGFjNGVkZDIxZTJfZTIwZDY0NzA4ZDQzYWEyMDAxMzk3N2IxZDc4ZWI5OWVfSUQ6NzQ0NDc4MDA2OTU3NzM0Mjk4MF8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM)
+
+每次使用它之前，都要输入`sudo chmod 666 /dev/ttyUSB0`来赋权，而且如果有多个一样的模块，就要指定赋权**插在某个USB端口上的，PID为多少，VID为多少**的设备，仅仅通过`/dev`下的文件名肯定是区分不开的。
+
+在`/etc/udev/rules.d/`文件夹下建立规则`100-usbserial.rules`如下：
+
+```Plain Text
+KERNEL=="ttyUSB*",
+ATTRS{busnum}=="1",
+ATTRS{devnum}=="8",
+ATTRS{idVendor}=="1a86",
+ATTRS{idProduct}=="7523",
+MODE:="0666",
+GROUP:="dialout",
+SYMLINK+="my_usb_serial"
+```
+
+刷新udev：
+
+```Bash
+udevadm control --reload
+udevadm trigger
+```
+
+此时在`/dev`里可以看到一个叫`my_usb_serial`的文件，它就是经过udev配置之后的，之前看到的`ttyUSB0`。之后每次插入符合规则的usb设备时，这个文件都会立即出现。
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NjMxZTNjYTczNTQ1MTFmMmIzOTYxOWMzOWI4NDhjZTNfYjQwOGYxY2JmMmEwOTdiYWUzYmNlNjNhZWM0MGIxNjBfSUQ6NzQ0NDc4NDcxODcwNjYwNjA5OV8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM)
+
+同理也可以利用udev固定USB转CAN模块，像下面这样，就可以在`busnum=3, devnum=7`的usb转can模块插入之后创建一个叫`my_usb_can`的网络接口：
+
+```Plain Text
+ACTION=="add",
+SUBSYSTEM=="net",
+KERNEL=="can*",
+ATTRS{busnum}=="3",
+ATTRS{devnum}=="7",
+NAME+="my_usb_can",
+GROUP:="dialout"
+```
+
+## systemd.service
+
+详情：https://www.jinbuguo.com/systemd/systemd.service.html
+
+### 开机自启
+
+把要开机自启的动作编写成一个service，注册给systemd即可实现可控、稳定的开机自启以及fail retry。
+
+比如要让一个ROS节点自启，并且崩溃之后可以自己尝试再自启的话，就先写这样一个启动脚本：
+
+```Bash
+#!/usr/bin/bash
+
+## /home/a/ws/launch.sh
+
+source /opt/ros/humble/setup.bash
+source /home/a/ws/install/setup.bash
+ros2 launch bringup_pkg bringup.launch.py
+```
+
+然后，编写服务文件`control_node.service`
+
+- `After=network.target`：在系统启动阶段达到`network`目标之后启动这个服务
+
+- `ExecStart=/home/a/ws/launch.sh`：设置entry为启动脚本`/home/a/ws/launch.sh`
+
+- `Restart=always`：自动重启
+
+```Bash
+[Unit]
+After=network.target
+ 
+[Service]
+Type=oneshot
+ExecStart=/home/a/ws/launch.sh
+Restart=always
+
+
+[Install]
+WantedBy=multi-user.target
+```
+
+把这个`control_node.service`复制到`/usr/lib/systemd/system`目录下，然后执行`systemd daemon-reload`重启systemd daemon。
+
+此时执行`systemctl status control_node`就可以看到注册的服务了：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NGI5NDYyOWFiM2ViZWYzMDEyZTVkZDE0YWMzMDhkMDhfNDdjYTU3ZTkxM2I5N2U0NzIwZDUyZDUwZDY0YTYzYjdfSUQ6NzQ0NDc4OTk5NTI4NTAzNzA4NF8xNzgwOTQ0NDQzOjE3ODEwMzA4NDNfVjM)
+
+执行`systemctl start control_node`即可启动服务，执行`systemctl enable control_node`即可让服务开机自启。
+
+### 不启动桌面环境
+
+为了节省性能，或者是为了加快开机速度等等，可以修改systemd的默认启动target为`multi-user.target`，只启动到终端环境里：
+
+```Bash
+systemctl set-default multi-user.target
+```
+
+如果要恢复桌面环境，把默认target改回`graphical.target即可`：
+
+```Bash
+systemctl set-default graphical.target
+```
+
+## systemd-analyze
+
+### 分析开机时间
+
+todo

@@ -1,17 +1,59 @@
 ---
+import { getCollection } from "astro:content";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import HomeTabs from "../components/react/HomeTabs";
+import ThemeToggle from "../components/react/ThemeToggle";
+import NoiseBackground from "../components/react/NoiseBackground";
+import WireframeTitle from "../components/react/WireframeTitle";
+import GridBackground from "../components/react/GridBackground";
+import { SITE, LINKS } from "../consts";
 
+const posts = (await getCollection("blog")).sort(
+  (a, b) => b.data.date.getTime() - a.data.date.getTime(),
+);
 ---
 
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="icon" href="/favicon.ico" />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>Astro</title>
-	</head>
-	<body>
-		<h1>Astro</h1>
-	</body>
-</html>
+<BaseLayout>
+  <NoiseBackground client:load />
+
+  <!-- Theme toggle -->
+  <div class="fixed top-3 right-4 z-50">
+    <ThemeToggle client:load />
+  </div>
+
+  <!-- Tabs card -->
+  <div class="min-h-screen flex items-center justify-center px-6">
+    <div class="relative w-full max-w-lg">
+      <!-- Grid background -->
+      <GridBackground
+        client:load
+        className="absolute inset-0 w-full h-full pointer-events-none"
+      />
+
+      <WireframeTitle
+        client:load
+        className="relative z-10 text-4xl sm:text-5xl font-bold tracking-tight text-[var(--color-text)] leading-tight mb-6"
+      />
+
+      <section class="relative z-10 w-full">
+        <HomeTabs
+          client:load
+          links={LINKS}
+          posts={posts}
+        />
+      </section>
+    </div>
+  </div>
+
+  <!-- Footer credit -->
+  <p
+    class="fixed bottom-4 left-0 right-0 text-xs text-[var(--color-text-muted)] text-center"
+  >
+    &copy; {new Date().getFullYear()}
+    {SITE.author} · Built with <a
+      href="https://astro.build"
+      class="underline decoration-[var(--color-text-muted)]/30 hover:decoration-[var(--color-text-muted)]"
+      >Astro</a
+    >
+  </p>
+</BaseLayout>

@@ -1,0 +1,104 @@
+---
+import type { CollectionEntry } from "astro:content";
+import { SITE } from "../consts";
+import ThemeToggle from "../components/react/ThemeToggle";
+import TableOfContents from "../components/react/TableOfContents";
+import "../styles/global.css";
+
+export interface Props {
+  post: CollectionEntry<"blog">;
+  headings?: { depth: number; slug: string; text: string }[];
+}
+
+const { post, headings = [] } = Astro.props;
+const { title, description, date, tags } = post.data;
+---
+
+<!doctype html>
+<html lang={SITE.locale}>
+  <head>
+    <!-- Blocking inline script: apply saved theme before first paint to prevent flash -->
+    <script is:inline>
+      (function() {
+        const t = localStorage.getItem("theme");
+        const d = t === "dark" || (!t && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+        document.documentElement.setAttribute("data-theme", d);
+      })();
+    </script>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="generator" content={Astro.generator} />
+    <title>{title} / {SITE.title}</title>
+    <meta name="description" content={description} />
+
+    <!-- KaTeX CSS for math rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css" />
+
+    <meta property="og:title" content={`${title} — ${SITE.title}`} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={new URL(`/blog/${post.id}`, Astro.url).href} />
+    <meta property="og:type" content="article" />
+  </head>
+  <body class="min-h-screen">
+    <!-- Theme toggle -->
+    <div class="fixed top-3 right-4 z-50">
+      <ThemeToggle client:load />
+    </div>
+
+    <!-- Table of Contents — fixed on the left when space allows -->
+    {
+      headings.length > 0 && (
+        <TableOfContents headings={headings} client:load />
+      )
+    }
+
+    <main class="mx-auto max-w-3xl px-6 py-12 sm:py-20">
+      <!-- Back link -->
+      <a
+        href="/blog"
+        class="inline-block text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors mb-10"
+      >
+        ← /blog
+      </a>
+
+      <!-- Post header -->
+      <header class="mb-12">
+        <h1 class="text-2xl sm:text-5xl font-bold leading-tight tracking-tight mb-4">
+          {title}
+        </h1>
+
+        {
+          description && (
+            <p class="text-base sm:text-lg text-[var(--color-text-muted)] leading-relaxed mb-6 max-w-2xl">
+              {description}
+            </p>
+          )
+        }
+
+        <div class="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-[var(--color-text-muted)] pb-6 border-b border-[var(--color-border-dim)]">
+          <time datetime={date.toISOString()}>
+            {date.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" })}
+          </time>
+
+          {tags && tags.length > 0 && (
+            <span class="flex flex-wrap gap-x-3 gap-y-1">
+              {tags.map((tag) => (
+                <span class="tracking-wide">{tag}</span>
+              ))}
+            </span>
+          )}
+        </div>
+      </header>
+
+      <!-- Post content -->
+      <div class="prose max-w-none">
+        <slot />
+      </div>
+
+      <!-- Footer credit -->
+      <p class="mt-16 text-xs text-[var(--color-text-muted)]">
+        &copy; {new Date().getFullYear()} {SITE.author}
+      </p>
+    </main>
+  </body>
+</html>

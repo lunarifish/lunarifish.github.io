@@ -1,0 +1,51 @@
+---
+import { SITE } from "../consts";
+import "../styles/global.css";
+
+export interface Props {
+  title?: string;
+  description?: string;
+  image?: string;
+}
+
+const {
+  title,
+  description = SITE.description,
+  image,
+} = Astro.props;
+
+const pageTitle = title ? `${title} / ${SITE.title}` : `${SITE.title}`;
+---
+
+<!doctype html>
+<html lang={SITE.locale}>
+  <head>
+    <!-- Blocking inline script: apply saved theme before first paint to prevent flash -->
+    <script is:inline>
+      (function() {
+        const t = localStorage.getItem("theme");
+        const d = t === "dark" || (!t && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+        document.documentElement.setAttribute("data-theme", d);
+      })();
+    </script>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="generator" content={Astro.generator} />
+    <title>{pageTitle}</title>
+    <meta name="description" content={description} />
+
+    <!-- KaTeX CSS for math rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css" />
+
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={Astro.url} />
+    <meta property="og:site_name" content={SITE.title} />
+    <meta property="og:locale" content={SITE.locale} />
+    <meta property="og:type" content="website" />
+    {image && <meta property="og:image" content={image} />}
+  </head>
+  <body class="min-h-screen">
+    <slot />
+  </body>
+</html>

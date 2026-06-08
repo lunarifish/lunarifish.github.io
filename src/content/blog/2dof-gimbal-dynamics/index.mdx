@@ -1,0 +1,256 @@
+---
+title: "二轴云台的动力学前馈"
+description: "简单有效地提升云台的动态目标跟踪能力"
+date: 2026-04-04
+tags:
+  - robotics
+---
+
+import AdaptiveFormula from "../../../components/react/AdaptiveFormula";
+
+## 1. 动力学模型原理
+
+一个2dof云台的受力规律可以由标准的机器人动力学方程描述：
+
+$$
+\tau = M(q)\ddot{q} + C(q, \dot{q})\dot{q} + G(q) + \tau_{fric}
+$$
+
+各部分的物理意义为：
+
+$\tau = [\tau_1, \tau_2]^T$：电机实际需要输出的力矩（Yaw 与 Pitch）。
+
+$q, \dot{q}, \ddot{q}$ ：云台的角度、角速度、角加速度。
+
+$M(q)$ \(惯性矩阵\) ：描述系统自身的惯性大小。随云台姿态（特别是由 Pitch 角度变化）而改变。
+
+$C(q, \dot{q})$ \(科里奥利力与离心力矩阵\)：描述两轴联动时的陀螺仪效应和耦合力。例如 Yaw 高速旋转时对 Pitch 轴产生的甩动力。
+
+$G(q)$ \(重力/空间平动力矩\)：描述质心偏离旋转轴时，重力或底盘平动加速度在轴上产生的静力矩。
+
+$\tau_{fric}$ \(摩擦力矩\)：包含粘滞摩擦（随速度变化的阻力）和库仑摩擦（恒定的干摩擦阻力）。
+
+## 2. 模型推导
+
+下面详细展开利用拉格朗日力学推导出一个2-dof云台动力学方程的全过程。
+
+拉格朗日分析法的优点是步骤非常固定，但计算相对牛顿力学的受力分析要复杂得多，但因为可以用sympy完成这些计算，不需要自己手算这些比命还长的微积分，所以无所吊谓：
+
+1. 计算系统的总动能 \($K$\) 和总势能 \($P$\)
+
+2. 构建拉格朗日函数$L=K-P$
+
+3. 代入拉格朗日方程：
+
+$$
+\frac{d}{dt}(\frac{\partial{L}}{\partial{\dot{q}}})-\frac{\partial{L}}{\partial{q}}=\tau
+$$
+
+### 2.1. 定义运动学（坐标系与转动）
+
+定义坐标系为前X\+左Y\+上Z\+：（[REP-105](https://www.ros.org/reps/rep-0105.html)）
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ZThiZTdhYTllYzg3YWVmMzM3ZGY0NGQxMjQ0MGY0OWNfNmY3ZTU4ZjUwNGZkYmJhOWE4ZTg3NWNjOGE2ZWY2ZjBfSUQ6NzYyNDc1MDU1MjcxMDE3MTYwMl8xNzgwOTAxODQ2OjE3ODA5ODgyNDZfVjM)
+
+云台有两个旋转轴，决定部件在空间中的姿态。
+
+1. Yaw 轴 \(转子1\)：绕大地坐标系的 $Z$ 轴旋转，角度为 $q_1$。
+
+   $$
+   R_1 = \text{RotZ}(q_1)
+   $$
+
+2. Pitch 轴 \(转子2\)：安装在 Yaw 轴之上，绕自身的局部 $Y$ 轴旋转，角度为 $q_2$。它受yaw带动，所以它的世界姿态是两者叠加。
+
+   $$
+   R_2 = R_1 \cdot \text{RotY}(q_2)
+   $$
+
+### 2.2. 追踪各部分的质心位置 \($p$\) 与速度 \($v$\)
+
+我们要知道转动时，每个部件重心的精确位置。引入偏心距概念：
+
+- yaw轴偏心：重心在旋转轴上有上下偏移 $l_1$。
+
+重心位置： $p_1 = [0, 0, l_1]^T$。
+
+- pitch轴双向偏心：我们假设pitch轴的重心只在X轴和Z轴上有偏移（在自己坐标系的 $X$ 和 $Z$ 轴上分别偏移了 $l_{2x}$ 和 $l_{2z}$），如果还考虑Y轴（左右）偏心的话计算会过于复杂。它不仅自己偏心，还被安装在yaw轴的偏心点上。
+
+重心位置： $p_2 = p_1 + R_2 \cdot [l_{2x}, 0, l_{2z}]^T$。
+
+对位置求导 \(`sp.diff(p, t)`\)，就得到了系统各部分的线速度$v_1, v_2$。
+
+### 2.3. 计算角速度 \($\omega$\) 并转换到局部坐标系
+
+我们要计算各部件的旋转快慢，且为了方便乘以惯量张量，角速度必须转换到它们各自的本体坐标系下。
+
+- yaw的空间角速度就是绕z轴转 $\dot{q}_1$。转换到自己参考系：$w_{1\_local} = R_1^T \cdot w_{1\_world}$。
+
+- pitch的空间角速度是yaw带动的角速度加上自身相对yaw的角速度。转换到自己参考系：$w_{2\_local} = R_2^T \cdot w_{2\_world}$。
+
+### 2.4. 计算系统的动能 \($K$\) 与势能 \($P$\)
+
+汇总整个系统所有平动和转动的能量：
+
+- **总动能**$K$：
+
+每个部件的动能 = 平动动能 \($\frac{1}{2} m v^T v$\) \+ 转动动能 \($\frac{1}{2} w_{local}^T I w_{local}$\)。
+
+这里的 $I$ 就是由 $I_{xx}, I_{yy}, I_{zz}$ 构成的惯量矩阵。把云台yaw和pitch的平动与转动全加起来，就得到总动能公式$K$：
+
+<AdaptiveFormula
+  client:load
+  formula="K=\displaystyle 0.5 I1zz \left(\frac{d}{d t} q_{1}{\left(t \right)}\right)^{2} + 0.5 I2xx \sin^{2}{\left(q_{2}{\left(t \right)} \right)} \left(\frac{d}{d t} q_{1}{\left(t \right)}\right)^{2} + 0.5 I2yy \left(\frac{d}{d t} q_{2}{\left(t \right)}\right)^{2} + 0.5 I2zz \cos^{2}{\left(q_{2}{\left(t \right)} \right)} \left(\frac{d}{d t} q_{1}{\left(t \right)}\right)^{2} + 0.25 m_{2} \left(l2x^{2} \cos{\left(2 q_{2}{\left(t \right)} \right)} \left(\frac{d}{d t} q_{1}{\left(t \right)}\right)^{2} + l2x^{2} \left(\frac{d}{d t} q_{1}{\left(t \right)}\right)^{2} + 2 l2x^{2} \left(\frac{d}{d t} q_{2}{\left(t \right)}\right)^{2} + 2 l2x l2z \sin{\left(2 q_{2}{\left(t \right)} \right)} \left(\frac{d}{d t} q_{1}{\left(t \right)}\right)^{2} - l2z^{2} \cos{\left(2 q_{2}{\left(t \right)} \right)} \left(\frac{d}{d t} q_{1}{\left(t \right)}\right)^{2} + l2z^{2} \left(\frac{d}{d t} q_{1}{\left(t \right)}\right)^{2} + 2 l2z^{2} \left(\frac{d}{d t} q_{2}{\left(t \right)}\right)^{2}\right)"
+/>
+
+- **总势能**$P$：
+
+我们只考虑重力势能，如果假设云台的基座是不动的话，那只需要定义重力加速度$g$为$[0 \ 0 \ -9.81]m/s^2$即可，但在机载环境下，底盘的加减速会产生额外的惯性力，导致云台受到扰动，pitch轴表现为车前后加速时会抬头、低头，左右加速时yaw会左右甩。这种扰动可以通过云台基座，即底盘上的加速度计测量出来。不妨把基座加速度计的测量值作为一个动态重力场$g_{vec} = [g_x, g_y, g_z]^T$纳入模型考虑，即可优雅地补偿掉底盘平动加速度对云台造成的扰动。
+
+每个部件的势能 = 质量 \* 在重力场方向的位置。
+
+$P1 = -m_1 (g_{vec}^T \cdot p_1)$，以此类推，求和得到 $P$。和上面的K一样，表达式过于抽象，这里就不放了。
+
+### 2.5. 求解动力学三大矩阵 \($M, C, G$\)
+
+此时我们拿到了K和P，可以把这两项直接无脑代入拉格朗日方程，但是这样会得到一个非常抽象的二阶微分方程，后续就很难处理了。我们需要把结果整理成$\tau = M(q)\ddot{q} + C(q, \dot{q})\dot{q} + G(q) + \tau_{fric}$这种形式。
+
+让AI介绍了一下计算这三个分量的数学原理，不感兴趣的话直接跑代码即可：
+
+---
+
+#### 惯性矩阵 $M(q)$ 的提取原理
+
+**物理含义**：$M(q)$ 是系统等效的“质量”。由于云台姿态变化，各转子的相对位置在变，系统对于各个轴的等效转动惯量也是动态变化的（比如 Pitch 俯仰时，Yaw 感受到的整体惯量会变）。
+
+**数学原理**：
+
+在多刚体系统中，总动能 $K$ 一定可以写成角速度的二次型（即角速度的平方项或乘积项），其标准矩阵形式为：
+
+$$
+K = \frac{1}{2} \dot{q}^T M(q) \dot{q} = \frac{1}{2} \sum*{i} \sum*{j} M\_{ij}(q) \dot{q}\_i \dot{q}\_j
+$$
+
+**代码实现**：
+
+因为 $K$ 中包含了 $\dot{q}_i \dot{q}_j$ 和 $M_{ij}$ 的组合，我们要把 $M_{ij}$ 提出来，最简单的办法就是对动能连求两次速度的偏导。
+
+就像求 $y = \frac{1}{2} a x^2$ 中的 $a$，连求导两次即得到 $a$。
+
+```python
+M[i, j] = sp.simplify(sp.diff(sp.diff(K, dq[i]), dq[j]))
+```
+
+#### 科里奥利力与离心力矩阵 $C(q, \dot{q})$ 的提取原理
+
+**物理含义**：
+
+- **离心力 (Centrifugal)**：部件自转时产生的向外甩的力，与自身角速度的平方 $\dot{q}_i^2$ 成正比。
+
+- **科里奥利力 (Coriolis)**：两个轴同时运动时产生的耦合拉扯力，与两轴角速度的乘积 $\dot{q}_i \dot{q}_j$ 成正比。（例如，Yaw 正在高速转，此时你往上抬 Pitch 轴，会感觉到一股奇怪的侧向力扭动 Yaw 轴）。
+
+**数学原理**：
+
+拉格朗日方程中的 $\frac{d}{dt} \left( \frac{\partial K}{\partial \dot{q}_i} \right)$ 这一项。因为 $M(q)$ 本身是随时间变化的（随着 $q$ 变而变），所以对其求时间导数时，会根据链式法则产生 $\frac{\partial M}{\partial q} \dot{q}$ 这种项。
+
+这堆导数展开后非常庞大，为了确保矩阵运算不乱，数学家引入了**第一类克里斯托费尔符号 (Christoffel symbols of the first kind)** $c_{ijk}$，它可以完美捕捉 $M$ 矩阵随着角度 $q$ 变化的偏导数：
+
+$$
+c*{ijk} = \frac{1}{2} \left( \frac{\partial M*{kj}}{\partial q*i} + \frac{\partial M*{ki}}{\partial q*j} - \frac{\partial M*{ij}}{\partial q_k} \right)
+$$
+
+**代码实现**：
+
+然后将克里斯托费尔符号与对应速度相乘并累加，就得到了 $C$ 矩阵的元素 $C_{kj}$。这种做法不仅严谨，还能保证算出来的 $M$ 的导数减去 $2C$ 是一个偏对称矩阵（这是后续设计无源性控制的基础特性）。
+
+对应代码：
+
+```python
+c_ijk = 0.5 * (sp.diff(M[k, j], q[i]) + sp.diff(M[k, i], q[j]) - sp.diff(M[i, j], q[k]))
+c_kj += c_ijk * dq[i]
+```
+
+#### 重力/外力场势能向量 $G(q)$ 的提取原理
+
+**物理含义**：当云台处于倾斜状态时，因为重心偏离了旋转中心，重力（或底盘加减速导致的惯性力）会试图把云台往下拽。$G(q)$ 计算的就是为了克服这个拉力，电机需要提供的静力矩。
+
+**数学原理**：
+
+力和势能的关系是：**保守力 = 势能梯度的负值**。
+
+而在拉格朗日方程中，$-\frac{\partial L}{\partial q_i}$ 这一项里的 $L = K - P$。因为势能前有一项负号，两者抵消，变成了正的 $\frac{\partial P}{\partial q_i}$。
+
+也就是说，系统想要往势能最低的地方走，电机需要输出的拉力 $G$ 等于势能 $P$ 对关节角度 $q$ 的导数。
+
+**代码实现**：
+
+非常简单直接，用总势能对各自的角度求一次导数即可。
+
+对应代码：
+
+```python
+G[i, 0] = sp.simplify(sp.diff(P, q[i]))
+```
+
+---
+
+运行上面的python代码可以可以计算出
+
+M：
+
+<AdaptiveFormula
+  client:load
+  formula="\displaystyle \left[\begin{matrix}1.0 I1zz + 1.0 I2xx \sin^{2}{\left(q_{2}{\left(t \right)} \right)} + 1.0 I2zz \cos^{2}{\left(q_{2}{\left(t \right)} \right)} + 0.5 m_{2} \left(l2x^{2} \cos{\left(2 q_{2}{\left(t \right)} \right)} + l2x^{2} + 2 l2x l2z \sin{\left(2 q_{2}{\left(t \right)} \right)} - l2z^{2} \cos{\left(2 q_{2}{\left(t \right)} \right)} + l2z^{2}\right) & 0\\0 & 1.0 I2yy + 1.0 m_{2} \left(l2x^{2} + l2z^{2}\right)\end{matrix}\right]"
+/>
+
+C：
+
+<AdaptiveFormula
+  client:load
+  formula="\displaystyle \left[\begin{matrix}0.5 \left(I2xx \sin{\left(2 q_{2}{\left(t \right)} \right)} - I2zz \sin{\left(2 q_{2}{\left(t \right)} \right)} + m_{2} \left(- l2x^{2} \sin{\left(2 q_{2}{\left(t \right)} \right)} + 2 l2x l2z \cos{\left(2 q_{2}{\left(t \right)} \right)} + l2z^{2} \sin{\left(2 q_{2}{\left(t \right)} \right)}\right)\right) \frac{d}{d t} q_{2}{\left(t \right)} & 0.5 \left(I2xx \sin{\left(2 q_{2}{\left(t \right)} \right)} - I2zz \sin{\left(2 q_{2}{\left(t \right)} \right)} + m_{2} \left(- l2x^{2} \sin{\left(2 q_{2}{\left(t \right)} \right)} + 2 l2x l2z \cos{\left(2 q_{2}{\left(t \right)} \right)} + l2z^{2} \sin{\left(2 q_{2}{\left(t \right)} \right)}\right)\right) \frac{d}{d t} q_{1}{\left(t \right)}\\- 0.5 \left(I2xx \sin{\left(2 q_{2}{\left(t \right)} \right)} - I2zz \sin{\left(2 q_{2}{\left(t \right)} \right)} + m_{2} \left(- l2x^{2} \sin{\left(2 q_{2}{\left(t \right)} \right)} + 2 l2x l2z \cos{\left(2 q_{2}{\left(t \right)} \right)} + l2z^{2} \sin{\left(2 q_{2}{\left(t \right)} \right)}\right)\right) \frac{d}{d t} q_{1}{\left(t \right)} & 0\end{matrix}\right]"
+/>
+
+g：
+
+<AdaptiveFormula
+  client:load
+  formula="\displaystyle \left[\begin{matrix}m_{2} \left(gx \sin{\left(q_{1}{\left(t \right)} \right)} - gy \cos{\left(q_{1}{\left(t \right)} \right)}\right) \left(l2x \cos{\left(q_{2}{\left(t \right)} \right)} + l2z \sin{\left(q_{2}{\left(t \right)} \right)}\right)\\m_{2} \left(gx \left(l2x \sin{\left(q_{2}{\left(t \right)} \right)} - l2z \cos{\left(q_{2}{\left(t \right)} \right)}\right) \cos{\left(q_{1}{\left(t \right)} \right)} + gy \left(l2x \sin{\left(q_{2}{\left(t \right)} \right)} - l2z \cos{\left(q_{2}{\left(t \right)} \right)}\right) \sin{\left(q_{1}{\left(t \right)} \right)} + gz \left(l2x \cos{\left(q_{2}{\left(t \right)} \right)} + l2z \sin{\left(q_{2}{\left(t \right)} \right)}\right)\right)\end{matrix}\right]"
+/>
+
+理论推导结束，通过这个模型（$\tau = M(q)\ddot{q} + C(q, \dot{q})\dot{q} + G(q) + \tau_{fric}$），我们可以计算出对于一个移动基座上的yaw\-pitch二轴云台，两个轴输出多大的力矩可以到达某个运动状态（位置、角速度和角加速度）。
+
+但我们还差一步，就是得到模型中的$m$、$l$这些物理参数的值是多少，根据经验从solidworks图纸里面看肯定是不准的，所以需要实验做参数辨识。
+
+## 3. 参数辨识原理
+
+到这一步，$M, C, G$ 矩阵中包含了大量的诸如 $m_2 \cdot l_{2x}^2 + I_{2zz}$ 这样纠缠不清的参数和复杂的三角函数。
+
+为了能够计算必须进行参数仿射提取。我们将所有角度相关的三角函数项作为已知条件，把所有物理常量打包成互不依赖的独立集合。在代码中这体现为 `.jacobian()` 的提取操作，最终把极其复杂的能量导数，拍扁成了 `Y_matrix * Pi` 这种可以直接用最小二乘法回归的线性代数方程。
+
+为了保证系统辨识中的矩阵满秩（可解），我们将系统状态提取为9个独立的基础参数（即代码中的 $\theta_1$ 到 $\theta_9$）。
+
+我们将这 9 个参数构成向量 $\theta$，将当前的状态数据经过三角函数计算后构成回归矩阵 $Y$ ，得到一个线性方程$Y(q, \dot{q}, \ddot{q}) \theta = \tau$，实验采集大量$Y(q, \dot{q}, \ddot{q})$和$\tau$的数据点，即可用最小二乘法回归出$\theta$的准确值。
+
+## 4. 怎么利用这个模型
+
+上面说到，通过这个模型（$\tau = M(q)\ddot{q} + C(q, \dot{q})\dot{q} + G(q) + \tau_{fric}$），我们可以计算出对于一个移动基座上的yaw\-pitch二轴云台，两个轴输出多大的力矩可以到达某个运动状态（位置、角速度和角加速度）。
+
+自瞄对敌方进行整车建模之后，可以预知目标未来一段时间的运动轨迹，换一种说法，其实就是知道自己的云台未来一段时间的运动轨迹。在任意时间点，我们都知道自己的云台处于什么样的位置、速度和加速度状态下，可以完美跟踪自瞄那边想瞄准的点。由于纯PID控制是一种“被动响应”的反馈策略，只有当云台实际位置偏离期望位置产生误差后，才会输出力矩进行纠正，所以实际上用纯PID实现没有误差的跟踪是不可能的。
+
+利用这个前馈模型，系统能够根据自瞄那边规划好的运动轨迹，利用物理规律提前“预判”并主动输出目标运动所需的理论控制力矩，直接在底层抵消掉重力、离心力与干摩擦带来的已知影响。动力学前馈 \+ PID这种组合使前馈模型承担了绝大部分确定的物理阻力，使得 PID 控制器被解放出来。此时的PID仅需负责应对极其微小的模型误差和不可测的外部扰动（比如线材拉扯）。这样就可以解决PID需要用误差驱动，但我们又不想要误差的矛盾。
+
+对比有无动力学前馈，下面是让测试云台的pitch轴跟踪一个动态目标的误差曲线：
+
+PID参数是随便调的，整体控制效果不是很好，误差比较大，但是可以看到有前馈的情况下，误差要小得多：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MzAwYTY5OTkyOGQwMDI0YmE3MTgxYjFmOTk3ZWMyODlfMzQxNDFmM2FiMjU5YjA5MDI1NDBlZTQ1MzJiZDczYWNfSUQ6NzYyNDc2MzQ5MDY4ODM3MTkzN18xNzgwOTAxODQ2OjE3ODA5ODgyNDZfVjM)
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YjkyYTE0OTBmYWY5MmVkZTA5MjliMGYwY2RhOWJkOTdfMGEyZTdiNGY0Y2I5MzcwOGIwODBhZTNiNDVkMTg1NmFfSUQ6NzYyNDc2MzUxNTI2MTMyNDUwMF8xNzgwOTAxODQ2OjE3ODA5ODgyNDZfVjM)
+
+## 5. 部署、调试方法
+
+所有离线和在线计算的代码均已经整理到 https://github.com/XDU-IRobot/gimbal-tool-suite 。参考README即可完成参数辨识和部署流程。
+
+## 6. 改进方向
+
+上面提到了一种在建模时用动态重力表示势能，从而实现补偿云台基座平动加速度的方法。然而如字面意思，这种方法只能补偿平动加速度，不能补偿底盘的角加速度。待找到一种优雅的办法解决这个问题。

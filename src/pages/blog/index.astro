@@ -1,0 +1,75 @@
+---
+import { getCollection } from "astro:content";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import ThemeToggle from "../../components/react/ThemeToggle";
+import { SITE } from "../../consts";
+
+const posts = (await getCollection("blog")).sort(
+  (a, b) => b.data.date.getTime() - a.data.date.getTime()
+);
+---
+
+<BaseLayout title="Blog">
+  <!-- Theme toggle -->
+  <div class="fixed top-3 right-4 z-50">
+    <ThemeToggle client:load />
+  </div>
+
+  <div class="mx-auto max-w-3xl px-6 py-12 sm:py-20">
+    <!-- Back link -->
+    <a
+      href="/"
+      class="inline-block text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors mb-10"
+    >
+      ← /
+    </a>
+
+    <h1 class="text-xl font-bold mb-2">/blog</h1>
+    <p class="text-sm text-[var(--color-text-muted)] mb-8">
+      Memos on computers, robots, and maybe music...
+    </p>
+
+    {
+      posts.length === 0 ? (
+        <div class="border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center">
+          <p class="text-xs text-[var(--color-text-muted)] m-0">No posts yet.</p>
+        </div>
+      ) : (
+        <ul class="space-y-0 m-0 p-0 list-none border-t border-[var(--color-border)]">
+          {posts.map((post) => (
+            <li>
+              <a
+                href={`/blog/${post.id}`}
+                class="block border-b border-[var(--color-border)] p-4 hover:bg-[var(--color-highlight)] transition-colors"
+              >
+                <span class="text-base font-medium block mb-1">
+                  {post.data.title}
+                </span>
+                <span class="block text-sm text-[var(--color-text-muted)]">
+                  {post.data.date.toLocaleDateString("zh-CN", {
+                    year: "numeric",
+                    month: "2-digit",
+                    day: "2-digit",
+                  })}
+                  {" · "}
+                  {post.data.description}
+                </span>
+                {post.data.tags && post.data.tags.length > 0 && (
+                  <span class="flex flex-wrap gap-2 mt-1.5 text-xs text-[var(--color-text-muted)]">
+                    {post.data.tags.map((tag) => (
+                      <span>#{tag}</span>
+                    ))}
+                  </span>
+                )}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+
+    <p class="mt-12 text-xs text-[var(--color-text-muted)]">
+      &copy; {new Date().getFullYear()} {SITE.author}
+    </p>
+  </div>
+</BaseLayout>

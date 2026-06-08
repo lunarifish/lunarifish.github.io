@@ -1,0 +1,762 @@
+---
+title: "25~26赛季 工程开发笔记"
+description: "fluorite amorph"
+date: 2025-01-30
+tags:
+  - robotics
+---
+
+这里用来跟踪开发进度，还有记录25、26赛季两年时间里，我研究工程机械臂的思路、资料，方便后面写技术报告的时候取材，如果对后来人有帮助就更好了
+
+
+
+两年的技术报告，虽然因为凹分数里面有注水和吹牛成分，但是还是有一定参考价值，可以把这篇笔记和技术报告结合起来看
+
+25年的技术报告：[技术方案-工程](https://w0ybodqyg7f.feishu.cn/wiki/SXkfwigPkipjwSkic7DcjFvanbf)
+
+26年的技术报告：[技术方案（工程）](https://w0ybodqyg7f.feishu.cn/wiki/N0R3wqER2i65dHkGYtcc9EkmnKg?from=from_copylink)
+
+
+
+其他一些深度学习相关的玄学方法先不谈，用传统方法做自动机械臂可以按顺序把全流程拆解成下面四个问题：
+
+1. 给定机械臂末端要伸到哪，
+
+2. 求达到这个位置每个关节所需的角度，（逆运动学/ik，inverse kinematics）
+
+3. 规划一条路径让机械臂能从当前位置平滑地移动到这个目标位置，同时规避掉途中的障碍物，（轨迹规划，path planning）
+
+4. 设计控制器，让机械臂上的电机输出力矩跟踪这个路径。（dynamics/control）
+
+另外如果末端执行器是夹爪或者灵巧手之类的东西，第一步之前就还有一个计算这个合适的末端位置，好让执行器可以顺利把物体夹住的步骤
+
+逆运动学和轨迹规划这两个相对比较困难的问题可以用moveit这个ros框架轻松秒掉，给定机械臂末端的初末位姿或关节的初末位置，它就可以计算出一条关节位置、速度和加速度的时间序列。最后一个方面，也就是控制是主要需要自己做的工作。
+
+不要用ros2的moveit2，截至2025年10月我写这句话时，humble版本的moveit2开发完成度仍然非常低，缺失很多重要功能，完全不可用（例如文档里写了可以通过一个yaml文件配置求解器参数，但是实际上并不行、ros1 moveit的一大堆求解器到了ros2 moveit2里面只有一两个，ui还有bug）
+
+按直觉来说当然可以用pid直接控，但是如果机械臂比较重（**压力机械，从一开始就别让他画重！！）**，PID就可能解决不了问题（调软了抬不动，调硬了抖），解决这个问题的一种效果比较好的方法是建立机械臂的逆动力学模型，基于这个模型叠加一层动力学前馈（和机械重力补偿效果差不多，25赛季的工程验证了一下这个方法，感觉效果还不错，但是没想象中那么好），或者用lqr、mpc这类控制器（26赛季尝试一下）
+
+## 动力学
+
+基于已经推导出来的运动学结果，用拉格朗日力学可以比较容易的求动力学模型
+
+https://github.com/XDU-IRobot/engineer-amorph/blob/main/src/offline/dynamic2.ipynb
+
+## mpc/lqr
+
+这一篇感觉是某位大学生的大作业报告（绷），如果能看懂的话那基本就是手把手教了，跟着做就好
+
+这篇的第二部分 视觉识别不是重点，这里我们只关注怎么控制
+
+> [2209.01706v1-Model Predictive Control Design of a 3-DOF Robot Arm Based on Recognition of Spatial Coordinates.pdf]
+
+这一篇还没看，看懂上面这一篇应该就够用了，但是他应该没考虑在MCU上实时计算的性能问题，得自己想一想
+
+> [Model_Predictive_Control_for_a_2-DOF_Robotic_Arm_Dynamics_and_Control.pdf]
+
+这个非常nb，第二大章节完整的把运动学、动力学建模讲了一遍，把里面的公式抄出来就能用
+
+> [非线性多关节机器人系统滑模控制 (鑳＄洓鏂岃憲, Pdg2Pic, 胡盛斌著) (Z-Library).pdf]
+
+### MPC
+
+MPC本身是一个带约束的优化问题，想要编程实现它就需要用一种具体的求解方法，而且要考虑求解速度，因为控制频率可能是500hz、1000hz，留给计算的时间不多；可以考虑把MPC转化为QP（quadratic programming，二次规划）形式，这样就可以直接利用一些现成的QP求解器（比如qpOASES）来求解。
+
+这个过程中的关键一步就是用具体的离散系统状态空间方程按照MPC的思想把式子列出来，然后变形成QP一般形式。下面这篇文章讲得很详细很明了：
+
+https://zhuanlan.zhihu.com/p/498481729?utm_psn=1863281508229464064
+
+## tinympc on stm32
+
+其实tinympc比较好用，速度够快，而且直接把ABQR矩阵扔进去就能算了，还能写python做完仿真之后直接生成c++代码用来部署，真上车的话建议用这个。文档：https://tinympc.org/get-started/examples/
+
+但是这个东西有几个坑，
+
+第一个就是：tinympc是基于系统时不变这一个假设来做性能优化的，这是它能跑在MCU上的很重要的一个前提。因为模型参数不变，所以它可以离线计算一部分东西，最小化要在线计算的内容
+
+在550mhz主频，cache关的STM32H723上，如果扔一个参数不变的，12维状态的四轴无人机系统给他的话，全0初始条件下10000次控制循环的计算时间是3457ms：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NmEwOGYwMzZjOGYwZDUyOGRiZjZhNTdhMjYwNGEzYjdfZjRlNjM4OWQxMDkwODJiOTUxMDE4MjFkOTg0N2YwYmZfSUQ6NzU2MTQ0NDc1MTQyMjE0NDUzMV8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+但是如果要追求模型的绝对精准，每个控制周期都做一次线性化的话，那tinympc做的优化就白做了，因为系统模型变了，他离线计算的那些参数现在都要在线算，同样初始条件，同样reference，1000次控制循环的计算时间就达到了1510ms：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NTQ2ODdiMGU2YmYxMzYwMDYxMDVlNDNjNDRiNWI2Y2RfZWQyMzJiYjczZmM5NTZhOWU5MzA4YWRhYThhODNlYjRfSUQ6NzU2MTQ0NTMyOTk0MjUxMTYxOF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+虽然上面的对比条件很理想化，但是其实已经能看出问题了，如果太完美主义，那就会丢掉tinympc的性能优势，所以实际应用的时候其实不得不做一些变通来保证性能，比如只在参考轨迹更新的时候，把轨迹的末端视为平衡点做一次线性化，其余时候都用上一次线型化得到的系统模型控制
+
+第二个：tinympc生成的c++代码会有很多巨大的全局对象，每个对象里都是超级多的Eigen矩阵（如下图），这些东西放在单片机上很容易搞出内存问题，跳进Hardfault handler，所以它生成出来c++代码之后，先把这些全局对象都改成用new创建在堆区里的对象，经实测这样就不会触发内存问题了
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ZjYxYjZjMzNlZDc5N2Y5ZWQyNDUyZGRmNTBjY2I3MzZfYmFmMWY0MTU4OTRjMzlkODllOTVmNTM2MmNkOWU4YjFfSUQ6NzU2MTQ0NjkyMzAxOTI4ODU4MF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+## 重力补偿/动力学参数辨识
+
+同构缩小的自定义控制器如果要好用的话，就必须要让他有在没有外力的情况下可以悬停的功能，经过实践证明这个功能会给操作手感带来极大的改善。这种功能是通过逆动力学重力补偿来实现的，为了不额外使用pid来补偿模型误差，最好把模型精度搞的稍微高一点，直接从solidworks里查到的动力学参数经实测达不到要求，只能让机械臂有一种轻飘飘的感觉，还达不到完全零重力飘起来的效果
+
+大概就是这么一种感觉，能感觉到机械臂在抵抗重力，但是抵抗的不是很好：
+
+[2025-10-12 01-16-59.mp4]
+
+25/10/27更新：
+
+上面这个是仿真+2025赛季的实践结论，在实际环境里加上各种摩擦力之后可能稍微有一点不准也是ok的。25赛季为什么这个模型做前馈效果很差，可能是因为当时sw图纸里的质量和质心位置实在和实际情况差的太远导致的
+
+经实测，静态应用下，也就是重力补偿，这个时候不需要知道转动惯量，所以称重+手调质心位置已经很够用了，有一个点需要注意，就是电机转子的质量在称重的时候不好处理，你不可能把电机的转子拆出来称一下多重。对于大机械臂来说，电机转子的质量可能相比于整条link来说只有一点点，所以影响不大。但是在自定义控制器重力补偿这个应用场景下，电机转子可能对于整条link质量来说分量很大，具体怎么消除这个影响，就是凭经验在连杆质量上加一个值来代表电机转子的质量。
+
+比如说对于达妙4310来说，这个值我反复试出来大概是75g左右
+
+如果是要在大机械臂上做动力学前馈，还是最好做一下参数辨识，这样可以把所有物理参数都测出来准确值。
+
+通过参数辨识可以把动力学模型里面的那些m、l、i之类的玩意都测出来很准的精确值，做完之后不仅自定义控制器悬停搞定了，实际装在工程上的那个大机械臂的前馈也会准的多
+
+看一段具体的动力学模型实现（25年工程的，ypp三轴，里面的参数都是从solidworks里直接读）：
+
+```MATLAB
+function tau = dynamic_model(q_des)
+
+qd_des = zeros(3, 1);
+qdd_des = zeros(3, 1);
+
+% q1 = q_des(1);
+q2 = q_des(2);
+q3 = q_des(3);
+dq1 = qd_des(1);
+dq2 = qd_des(2);
+dq3 = qd_des(3);
+
+l2 = 0.34;
+l3 = 0.37;
+
+I1 = 0.2473;
+I2 = 0.1246;
+I3 = 0.0402;
+
+m2 = 1.84;
+m3 = 3.46;
+
+r2 = 0.097;
+r3 = 0.150;
+
+g0 = 9.8;
+
+a1 = m2*r2*r2 + m3*l2*l2;
+a2 = m3*r3*r3;
+a3 = m3*r3*l2;
+b1 = (m2*r2 + m3*l2) * g0;
+b2 = m3*r3*g0;
+
+M = [I1 + a1*cos(q2)*cos(q2) + a2*cos(q2+q3)*cos(q2+q3) + 2*a3*cos(q2)*cos(q2+q3), 0,                           0;
+    0,                                                                            I2 + a1 + a2 + 2*a3*cos(q3), a2 + a3*cos(q3);
+    0,                                                                            a2 + a3*cos(q3),             I3 + a2];
+
+M = vpa(M, 4);
+
+N = [-0.5*a1*dq2*sin(2*q2) - 0.5*a2*(dq2+dq3)*sin(2*q2+2*q3) - a3*dq2*sin(2*q2+q3) - a3*dq3*cos(q2)*sin(q2+q3), -0.5*a1*dq1*sin(2*q2) - 0.5*a2*dq1*sin(2*q2 + 2*q3) - a3*dq1*sin(2*q2+q3), -0.5*a1*dq1*sin(2*q2+2*q3) - a3*dq1*cos(q2)*sin(q2+q3);
+    0.5*a1*dq1*sin(2*q2) + 0.5*a2*dq1*sin(2*q2 + 2*q3) + a3*dq1*sin(2*q2+q3),                                  -a3*dq3*sin(q3),                                                           -a3*(dq2+dq3)*sin(q3);
+    0.5*a1*dq1*sin(2*q2+2*q3) + a3*dq1*cos(q2)*sin(q2+q3),                                                     -a3*dq2*sin(q3),                                                           0];
+
+N = vpa(N, 4);
+
+g = [0;
+    b1*cos(q2) + b2*cos(q2+q3);
+    b2*cos(q2 + q3)];
+
+g = vpa(g, 4);
+
+tau = M * qdd_des + N * qd_des + g;
+tau = double(transpose(tau));
+```
+
+对于自定义控制器来说，由于要做的只是“静止状态下的”“重力”补偿，所以动力学模型其实变成了一个“静力学”模型，那一大串东西可以简化为$tau=g$，而从上面可以看到g向量只和b1、b2两个参数有关，那就只需要让机械臂静止在不同的位置，把关节位置和关节实际输出力矩记录下来做个最小二乘就好了（重力向量方程整理之后可以表示为$tau=F(q)cdot
+[begin{array}{c}
+b1 
+b2
+end{array}]$，b1b2向量叫待辨识参数集，一般记为$pi$，q知道，tau知道，tau等于g，所以b1和b2可以算出来）
+
+用仿真示意一下，要做的就是给pitch1 pitch2两个关节位置输入随机序列，采很多组力矩数据：
+
+[2025-10-12 01-59-07.mp4]
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ODE0MWE0NWM5MDhjN2I3ZTM2M2QwZWMyMzdhMjA3NjFfZTcxZjZiNTA5OGQxMjg4NTc0MDg1YWY1ZmU2Yjk1OWRfSUQ6NzU2MDAyNTQ0MzYwMjEwNDMyMV8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+如果想要把所有参数，包括和惯性有关的那些东西都弄的很准用来做大机械臂的前馈，就要让机械臂动起来，然后记录他动的时候的加速度、速度、位置和实际输出力矩，要算的参数集也就包括 MN矩阵里面的那些，不光是g向量了。
+
+让机械臂怎么动辨识结果才能最好也有一些门道，这个叫激励轨迹设计，网上资料很多
+
+下面是做最小二乘用的代码（AI写的）：
+
+```MATLAB
+function pi_identified = identify_gravity_parameters(experimental_data)
+    % experimental_data: N x 6矩阵 [q1, q2, q3, tau1, tau2, tau3]
+    
+    N = size(experimental_data, 1);
+    T = zeros(3*N, 1);
+    W = zeros(3*N, 2);
+    
+    for i = 1:N
+        q2 = experimental_data(i, 2);
+        q3 = experimental_data(i, 3);
+        tau = experimental_data(i, 4:6)';
+        
+        % 回归矩阵（只包含重力项）
+        Y = [0, 0;
+             cos(q2), cos(q2+q3);
+             0, cos(q2+q3)];
+        
+        T(3*i-2:3*i) = tau;
+        W(3*i-2:3*i, :) = Y;
+    end
+    
+    % 最小二乘估计
+    pi_gravity = (W' * W)  (W' * T);
+    
+    % 提取b1, b2
+    b1_identified = pi_gravity(1);
+    b2_identified = pi_gravity(2);
+    
+    pi_identified = [b1_identified; b2_identified];
+end
+```
+
+上面的东西做完之后，如果发现对基座倾斜的鲁棒性不好，就要考虑：上面模型里面的重力向量是固定竖直向下的，所以还要在基座上装一个imu，用imu算出来的基座姿态对重力向量做修正，直接用基座系到世界系的旋转矩阵和重力向量相乘，把重力向量转到正确的方向上即可
+
+g0_base = R_base * g0_world
+
+但是这个，说实话实测下来影响没有那么大，如果稍微歪一点点重力补偿都会失效的话那就要考虑是不是模型参数有问题，而不是做这个东西。
+
+1. 做完重力补偿之后，如果觉得手感滑可以加个阻尼器。
+
+2. 后面三个关节很轻，用不着用动力学模型做重力补偿，调一个硬一点的阻尼就够稳住了。
+
+下面是重力补偿做出来的效果（只有两个大pitch关节）：
+
+[IMG_5664.MOV]
+
+### 摩擦补偿
+
+https://zhuanlan.zhihu.com/p/338637547?share_code=uL1V69Zup1gT&utm_psn=2003873069815584395
+
+## 自定义控制器力反馈
+
+[j.tbit1001-0645.2025.070.pdf]
+
+## 运动学
+
+https://zgzhou.notion.site/PUMA560-a116cd9695d349aa9f338081f013a2a4
+
+运动学分为正解（给关节角度求末端位置）和逆解（给末端位置求关节角度）。这里主要记录一下逆解的思路
+
+逆解算法分为迭代优化求数值解（https://zhuanlan.zhihu.com/p/1889447970438632548）和几何法求解析解两大类，解析解更稳定且开销小，但根据构型不同，机械臂不一定有解析解，关于怎么判断一种6dof串联构型有没有解析解可以遵循两条原则（pieper准则）：
+
+1. 三个连续的转动关节的轴相交于同一点
+
+2. 三个连续的转动关节的轴平行
+
+这两年RM比赛流行的六轴臂一般都是这种PUMA560构型（yaw pitch pitch roll pitch roll），具有解析解，且多解情况只有两种，比较简单：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=OGViNWI1YzM4ODVkOGM3NjViN2QwNzhhYTZlZWRhZWFfY2VhYjI2OGViNDg3NTM4YTgxMDcyOTc5NmQxMTkyMzVfSUQ6NzYxOTc4MDEyODUyNDAxMjc2Nl8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+求这种构型的逆运动学的思路是“先定位再定姿”，分析一下可以发现，末端工具的位置只由前三个关节角度决定，用前三个关节把工具放到想要的位置之后，再用后三个关节调整工具的朝向。
+
+第一个大yaw轴的角度很好确定，从上往下看：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=OGYwZWEwM2ZkNmZmMDQ3ZjVkZTIzYjVkYzM5MjNhZDBfMGYzNDA2OWE0OWQ1N2E1MTBmNWJiMmU0OGNkNDdjMjVfSUQ6NzYxOTc4MjcwOTEwMzEzNTY4OF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+$theta$就是$atan2(x, y)$
+
+第二、第三个pitch关节也很好确定，从侧面看：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NDEyYjIxNzJkZDhhNWQzN2E5NzRhY2EzZDA0OTgyYmFfMmQyNDYzMjgxMjJjM2M0OWVkMzY1ZGNjYmIzNDQwMGNfSUQ6NzYzODgwMzQ3NjE1NTgyOTIxN18xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+臂长$l1$、$l2$已知，虚拟杆长$l3$也已知（j2、end两点间的距离），求两个角度，这是一个解三角形问题，用几何方法算出q2和q3即可
+
+这里涉及到多解问题：elbow-up和elbow-down两种情况，都可以使末端执行器到达相同的位置。特征也比较明显，就是q2是正数还是负数。
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YjBlOTNhMzg3MmU3OThkYmVjOTJkNTlhNmRlODAxMTJfMmU3YzRiYzhjZTUxN2EzM2Y3Y2ZmNDY0YmMwOTA2MDNfSUQ6NzYzODgwNDQ3NzQxNTkxODU2Ml8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+前三轴定位，后三轴定姿。末端三关节的轴线交于一点，所以可以把末端的三个关节抽象成安装在这个交点处的roll-pitch-roll万向节。给定末端执行器的姿态，求关节角，本质是分解合成这个旋转的一个ZYZ欧拉角，相关内容在机器人学导论的一开始就有提到，直接去看书就可以，这里不再赘述
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MjExZTc5ODg3YjQzOWEwNDdmOTI1NjY4N2RiZGY4ZjFfMDRjODEzNTg4OWU3N2I0ZWYyNzYzYzM2MzBkYmQ2NjdfSUQ6NzYzODgwMjA0OTkwMzQxNDI0Ml8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+我们关心的是末端工具（夹爪或吸盘）的位姿，而不是这个虚拟球腕的位姿，所以还要处理tool offset：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=M2YzMzA2Yjk2MDZkNDY2NDgwODU4ZGVjYWQ0ZmY3NDhfYjBlZGVhOWZlMjUwNjViNjhkZWFhNDliMzVlNzE3MWVfSUQ6NzYzODgwOTA3OTU1NzY3MTkwN18xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+## 输入整形（残留震动抑制）
+
+https://zhuanlan.zhihu.com/p/402291172?share_code=fwwyvmlMo14s&utm_psn=2047255562614740908
+
+## 手眼标定
+
+机械上总会有些装配误差，你在图纸里看的相机和手的相对位置实际上可能并不是这么回事，所以多了这一步
+
+如果相机装在机械臂以外，叫手在眼外，反之叫手在眼内。
+
+眼在手外标定是这么回事（那个神秘玩意是标定板，可以是棋盘格子可以是apriltag，只要能通过图像算出他的姿态就可以。末端相对底座的位姿是正运动学算出来的）：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YTE1MzhkYTNjZjkzZDk5OGU1ZDI5OTdmZDVlNDJlOWNfNWJlOTdhODYzNGViNjQxZjRkN2NkMDViNTNiNjQ3YTdfSUQ6NzU3NjcwNTEyMTU2OTIxMzYyNV8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+眼在手上标定是这么回事：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NWUyYjIxMTg0MGU4NmI3NTRhNWMyOWQzMTA2ODZhZTZfNjc4NjNiOTgzMWU3Y2M1NjkzOTJkNTE3ODMzN2FlYThfSUQ6NzU3NjcwNTY3NjczMTI4ODc5NV8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+本质上他们都是一个解AX=XB这两个齐次变换里面的那个X，想细嗦网上有很多资料，但是建议别细嗦，opencv里面有一个calibrateHandEye函数，直接一行搞定
+
+### 用easy_handeye2进行手眼标定
+
+已经有人基于opencv和ros2造好了这些轮子，直接用就可以
+
+https://github.com/marcoesposito1988/easy_handeye2
+
+1. 首先标定相机内参，后面定位apriltag会用到，一般d435、g336l这种相机都是出厂标定好的，如果不是的话自己参考这篇文章标一下：https://zhuanlan.zhihu.com/p/488925991
+
+2. 在机械臂上贴一个apriltag，然后在urdf上相应位置打一个坐标系
+
+（好像不用？easy_handeye文档里面说的我没看懂是啥意思（见下图），我不想后面出问题所以还是打了）
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MGE3OTI0ZDI0OTBlZWRmMjYzMmY5NmMwM2ZmYjY3MThfMDAyMDhkZTcxMzQwOTI0ZjIzMjFiNTcyZThiMTg3ZThfSUQ6NzU5MDQzMTgzNzM4MjU2MDcyMl8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=OTYyMGNjM2QxZDg4OWYwZjVhNzNhOWZhZDhiMjlhMGVfZWRlOTIzODNiNjA3ZGRjNTAwOTg3Y2YxZWFhYTZkYjVfSUQ6NzU5MDM5NjY4ODM2MDA2NTk4MF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ZmEwNWMzZjk5NTA3NzJlZTA0MWVhODk5MDk4MDMzYTBfMjA5OGFhOWNjMTgxNzcyM2M1NzFmMjhjNDY2Yzk4NjhfSUQ6NzU5MDM5Njc1Njc5NDMzMDA0Ml8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+3. 写好上下位机通信，模仿`joint_state_publisher`节点的方式，把机械臂的关节位置发到`/joint_states`话题上，大概10~20hz频率就够：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=OWFkODE1MWVhOGM5ZmFlN2M1ODk2NDM5ZDA0OTU4YjJfMTliYmE4OTJiMDc5M2YxYjRkNjlkZjcyMzIxNTgyYmZfSUQ6NzU5MDM5NzIwMjQ3NzAwOTg4Nl8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NmQ1Y2MyNjBlOGQ1ZTRiZWRjNDdiMWMzMjQ4NmQ3YTlfMzIxNWRmZDUzNGFkMDJhNzVlZDY0Njc1MDU1NjdiODZfSUQ6NzU5MDM5NzMxMjI2Njk0NzUyNl8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+4. 启动robot_state_publisher节点和moveit的move_group节点，关节位置会自动被转发到tf上面。
+
+5. 启动apriltag定位节点，可以自己写，也可以直接用`apriltag_ros`这个包(`sudo apt install ros-jazzy-apriltag`)，自己写一写逻辑，把相机系->tag系的变换发出来：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MDVlNjAxNGI3ZDBkMTU5MmU3YjY0MTBkNWVlYWUxZWFfMzhkMWM2NTIwNGZiMTNmZTY2YWFkZWJmMDcwOTE5MDlfSUQ6NzU5MDM5ODA2ODMxNTQ3NTE0NV8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+6. 写easy_handeye2的启动文件：
+
+    ```xml
+    <?xml version="1.0" encoding="UTF-8"?>
+    <launch>
+      <include file="$(find-pkg-share easy_handeye2)/launch/calibrate.launch.py">
+        <arg name="calibration_type" value="eye_on_base"/>
+        <arg name="name" value="my_eob_calib"/>
+    
+        <arg name="robot_base_frame" value="arm_base"/>
+        <arg name="robot_effector_frame" value="apriltag_link"/>
+        <arg name="tracking_base_frame" value="camera_link"/>
+        <arg name="tracking_marker_frame" value="tag_0"/>
+      </include>
+    
+      <include file="$(find-pkg-share amorph_bringup)/launch/apriltag.launch.py"/>
+    </launch>
+    ```
+
+设置好里面的四个frame：
+
+- `robot_base_frame`：机械臂底座坐标系
+
+- `robot_effector_frame`：文档里说填末端工具系，但是我没试过，这里填urdf里面的tag系
+
+- `tracking_base_frame`：相机的rgb光心系（注意不是camera_link！）
+
+- `tracking_marker_frame`：apriltag识别节点识别到的tag系
+
+可以像上面一样顺便把apriltag的识别节点开起来。
+
+7. 上述准备工作全部完成之后，启动机械臂驱动、move_group、apriltag识别节点，最后启动这个手眼标定的launch文件。稍等一会会弹出一个窗口：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ODQxZjIxNDdhZTUxMDkzMjM0ODc5OGM1ZDNlZDFjMjNfNDcxODE4ODZkMGZmMTk2OWQ5YjMyZmNmYWQ0MDRkMjZfSUQ6NzU5MDM5OTI2MTgwMDQzNDY0N18xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+8. 保持相机可以稳定识别到apriltag，把机械臂四处动一动，动到一个地方点一下`Take Sample`，动的幅度要尽量大，采的数据点数要尽量多，最少20个点，最后Result会稳定下来，这个就是手眼标定结果，直接把这个作为`arm_base`->`camera`的静态变换发出来即可：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ODU3OWIzNWI5MTQ5YTM5ZDAwN2U3ZWE4NDdiYWFmZTlfMWNhOGNlOTk2YTQ1MWY3NjM2YmE5Y2M5OGUyZGE0YTlfSUQ6NzU5MDQwMDExMDU1OTc3NTY5OF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+9. 完成之后在rviz里面看一下效果，rviz渲染的机械臂模型和实际拍到的机械臂重合的怎么样，根据实践经验，在我用这个7×7cm的apriltag的情况下，这个结果一般会有一些偏差：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YzgwZjE1M2JkYjQwMzM5YzczNmMwOGI5OWZjY2U3MTlfOWZlOTIxMjljZDFkMzA2YWVjNWQ3NjRmNGZlZDM2MGVfSUQ6NzU5MDQwMDQzMDgyNDMyODE0M18xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+可以看深度相机点云、图像手动微调，尽量调到完全重合：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=Mzg1MWQzMzNjYmEzYmZhN2E2MmE4YTdjM2FiNGE2MWZfNjBlZDYwZGZkNWY1MWE3Y2Y1Yjg3MTFjNGYwYTk4OWFfSUQ6NzYxNzE5MDQzMTA0MTg4MzM1NV8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+## 视觉
+
+### 深度相机选型
+
+这方面上交在25赛季结束之后有分享过经验：
+
+https://www.bilibili.com/video/BV1LQn2zoEAm
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YzA0MjA3YjNjN2M3ZWFlN2Y5OTQxYWUzNzJhYzFhZGJfMzFiNTI4YjQ3MTgxN2E4NmRkYzY3NGViN2E5NzYyZWJfSUQ6NzU5MDQ0MDE3NzgzMTU0NTgwMF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+总的来说，虽然当下行业里用的基本都是双目结构光相机（低成本+够用），但是机械臂视觉这种极度要求高精度的场景，tof是绝对比双目结构光效果要好的，上图里提到的奥比中光Femto Bolt就很不错，Realsense L515也不错（性能可以但是产品很旧，SDK不支持新版ubuntu系统），但是受财力限制，买不起。。。所以就退而求其次用队里有的d435，很幸运，关超自己有一个奥比中光Gemini 336L，后面借来用了，虽然也是双目结构光，但是因为产品比较新所以效果比d435好了不少。
+
+### 炼丹数据哪里来1之x-anylabeling
+
+https://github.com/CVHub520/X-AnyLabeling
+
+这个标注软件支持用SAM辅助标segment数据集，效率非常高，还可以练定位，标完50000张应该可以颗秒donk了
+
+[6910.mp4]
+
+### 炼丹数据哪里来2之blenderproc合成实例分割数据
+
+这个东西的功能基本就是用脚本操作blender，我的做法是在blender里搭一个场景，然后给一个物体模型，随机采样物体姿态和相机姿态，然后它就可以批量生产这个物体模型在这个场景里的各种数据集，实例分割、检测、6d位姿等等都可以搞，而且出来的就是ground truth，数据质量无敌，这基本上等于左脚踩右脚上天，拥有无限的数据来炼丹了：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=Y2Q2OGI3NzhmNzRiNzVlY2NkZmY5MWNiNDBiMzBiMDNfMzExZmY1ZmRlMzBhZTFiZTU0NWE1NDBjYzY2Yjk3NDVfSUQ6NzU3MDcyMjEwMDkyODM0ODE2NF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YzA3ZGUxNjY2MTU3MmFmZTExODJkZmQwNDI2NzJiOGRfZjNjZmNhYmYzZjM1YjQ3YjgzNjQ4OTM4OTE0MDIzMmFfSUQ6NzU3MDcxNTI0ODY5MzU5MjA2N18xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MjQ0NDljZmEzNWM4YzY3YmQ0MmE0NzU1ZDdkZmIzYjRfZWQ5MDEwOGJlMWJkNDRmMjYzMTFkZThiMWI0NGI4M2NfSUQ6NzU3MDcyMjk0MzkzODI5Nzg1OF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+### 炼丹技巧
+
+用上面的方法做完数据集之后，就可以开始选一个模型开炼了，我选的是yolo11m-seg。网上有很多炼丹的技巧分享，结合我自己的经验的话就是：
+
+1. 总量控制在20000~30000张图左右，少了效果不行，多了训练时间太久不好迭代
+
+2. 合成数据和实拍数据混在一起，不要单独用
+
+3. 加一些负样本，比如弄一个红色的能量单元
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=YWJiZWVmNTc1NTg4ZGU5ODE2MGMyZjI1YzQyZTU4NjBfOTdmZGU3M2RjMDNhODlkOTYzYjEwZTBjOWQzZWUzNTdfSUQ6NzU5MDQyOTkwNDU0NjY2MzY0NF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+4. 模型在哪用，数据就在哪采，场上拍的数据集最优
+
+5. 如果做不到第4点，场景一定要尽量多变化，不要连着2k~3k张图都是在同一个地方拍的
+
+6. 能加的数据增强都加上，ultralytics都帮你写好了
+
+连着一个周拿着相机到处拍，然后回来标数据集，晚上下班之前炼一轮，燃尽了。。
+
+虽然最后模型的泛化还是不行，但是在实验室里效果还是非常ok的（大部分视频都是在实验室里拍的，这是我上面第4点总结的依据）
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=OTZjOWZiYWNiMGM5ZTUyOTc5OGU1MmNiNDVkOTg3MjFfNDliZDA4NjJjODBkMzEyMmQzMmZiNDY3NmRmZjY3NjRfSUQ6NzU5MDQzMDU1NjgzODA1NDg1N18xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+### 能量单元的6d位姿估计
+
+拿到能量单元的mask之后，接下来就要开始考虑怎么做6d位姿估计。
+
+首先我做了一个第一版demo，只定位，不考虑姿态。这个很简单，把mask的最中间一小块抠出来，深度过一个中位数滤波就好了，实测下来效果非常好：
+
+[20260101-235921.mp4]
+
+接下来处理旋转，首先我想到了slam里面常用的一些点云配准方法，icp、ransac这些，但是实测下来这种算法根本一点都用不了，估计的位姿完全乱飞，很可能是因为深度相机能拍到的就只有面向相机的那一点点，而且能量单元还是对称的：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=OWZkNGJmM2I2ZTljNDAwMDE0ODU5MWI3NTliNTFkODdfNmJjNjk5Mzc3NjJjM2M3ZTlmZTY1ODI0NTIyZWRkMDhfSUQ6NzU5MDQyMTI5Njg3ODUwNTE1NF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NjZiYzJlMGM5MmI4NTFiNTRmZTcwYmIwMGJhZWEzMDZfODU0N2VjODE4ZDBlZWFlYmExZjk3MWNmM2MxYjc0NWVfSUQ6NzU5MDQyMTM4MzQzMjEyOTUwNF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MTQ4OTYyOTI4MzZjNTczNzY5MDgyMmVmMGEwNzM2OThfZWY3NDA0YmRkZjM5NjVhODEzYTQ1MjdkNDk3NDU2NjRfSUQ6NzU5MDQyMTUwOTczMTA2MDkyMl8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+这种比较泛用的算法不行，那就考虑能量单元本身的特征，然后针对性的做一个算法，毕竟这个比赛也不会让你识别别的东西，我接下来的思路是，这是一个分三段的圆柱，点云里面也大概能看出有一点点圆柱面的样子，那就试试用PCA拟合一个圆柱面的主轴方向，结合第一版demo里面很稳的位置估计方法，出来的结果意外的还不错：
+
+[2025-12-31_15-28-24.mp4]
+
+接下来做几步几何运算，把坐标原点移到能量单元的底部中心，方便后续处理：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ZTBkODgzNzc1Mzk5NTk2NTQ2YWFlZTRiNjMyZjYzOWFfNjgzN2Q0NDFiYjVlODU1Mzg0NTBiNDdkMzAxYTA2OGNfSUQ6NzYxNzE4ODU5NjgwMTM0MjY1Ml8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NDNlNjVhMDFjYTMwYmVhMzkyZjcyMWQ0YmY2ODZlZDVfNTFiZmZjMjE5YzY0YTkzYzczZDk2ZDBlMDViYTliYWFfSUQ6NzYxNzE4ODk0NjU3Mjc1Nzk1NF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+## moveit
+
+记录一些和moveit2这个半成品项目大战 ~~1~~ 2 年摸索出的一些心得
+
+### python binding
+
+https://picknik.ai/moveit/ros/python/google/2023/04/28/GSOC-MoveIt-2-Python-Bindings.html
+
+### 把机械臂模型导入moveit
+
+网上的moveit教程好像都是默认已经有了urdf模型，几乎找不到一步步从solidworks到最终导入moveit的教程，所以这里详细介绍一下整个过程
+
+#### 从sw里导出urdf
+
+首先给solidworks装上sw2urdf插件：https://github.com/ros/solidworks_urdf_exporter
+
+在solidworks里面首先做一些处理，这个模型只需要能表示机械臂的外形即可，内部不会影响整个外部轮廓的的传动结构、电机电调等等东西建议都删掉或者压缩掉，这些东西不仅会增加模型复杂度，还可能导致一些意想不到的干涉影响moveit的碰撞检测。限位机构可以保留。
+
+把机械臂摆到你定义的零位，然后每个关节上建一个点、一个轴、一个坐标系，为了后续方便处理，以每个关节的转轴为Z轴：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NzM5YmNhMjU2MDVlYjk3YjU2MDgyNzljYjE4ZmQ3NzFfYTVjOGI0YzNiMDZlZTFlZDY3MDRkODBjYzQwNDk1NmJfSUQ6NzYwNDA0NTE5MDY1NTExODI5Nl8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+然后给整个机械臂建一个参考原点，坐标系定义按REP105来（https://www.ros.org/reps/rep-0105.html）（前+X，左+Y，上+Z）：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=Nzc1YzkzMDRkNjk1YjM4NGNkYTBjYzQwMzU0ZDcxZWZfYmZhZjA2Zjc5MWNlZGMzNjQ0OGMwODY5NTgxZjJlNDZfSUQ6NzYwNDA1MjI3ODkzNDA5NzA4NV8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+设好之后，工具->Tools->Export as URDF：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MWU3ZWM2OGVjZTY5ZGVjZjYyN2ZjMjcxNGM5MGUyMDFfMzA2NjI2NjZlYWU0YzJiMzJmM2JkZTUzYWYyZjFkOGVfSUQ6NzYwNDA0NTY1NzQzMzA4MzEwNV8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+在左边一个关节一个关节的搭建urdf的树形结构，填写link名称、joint名称，坐标系和轴选刚刚第一步建好的对应的即可，Joint Type按实际情况选择，带限位的旋转关节选revolute，可以无限旋转的旋转关节选continuous，平动关节（比如夹爪的指头）选prismatic，最后把这个link包含的零件选上：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ZDU1MDBkYzZhYjc2NjAyYzliNmJlMTlmZDRlZmUzNzBfZDIzY2NiZDU2Mzg0NTk0YjkzODRmMzc2NDUxZjBhMThfSUQ6NzYwNDA1MDQyMzg1NDgxMjM4Nl8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+搭好之后点Preview and Export（不要点对钩），在弹出的窗口里给每个revolute joint设置限位，由于现在不太好想象每个轴的旋转方向，所以可以先填一个-pi~pi，然后待会导出之后再看着rviz调整，力矩和速度限制随便填一下即可：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MDA3MDY1YmI0NDE4MzY3ZjI1ODg5MzgzY2U0OGFhYzBfMWZiNWE1MzIwNDY4ZjdiMzc5MDE5ODdkNjZiMWY3ZWJfSUQ6NzYwNDA1NDI1NDA2MzYwMjYyN18xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+注意夹爪的两个指头有联动关系，这里设置gripper_r为mimic joint，mimic对象为gripper_l，因为两根指头的移动方向总是相反的，所以multiplier填-1：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MDc4ZGVkNWVlMTIyNjE0MDY5OTI1YjVkN2UyNGYwZTVfYWFlMGNiZTM1MDJmZDVjNjVhOWJiZmM5Y2ZiMTZhOTdfSUQ6NzYwNDA1NDY0NjAzODA4ODY1M18xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+点next、Export URDF and Meshes直接导出，选保存位置，文件名就是导出的ROS package的名字，按惯例这里填xxx_description，xxx是机器人的名字：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ZmYyZmEwYjg1NTk3NmNkNGQ4M2JkMDQxMzg1YjFiZGZfYmI1NDhmZTMzZTk2NTgyMTI2MzU2MjliM2VlZmUyM2VfSUQ6NzYwNDA3MzE1NTc1MzM0ODA1NV8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+#### 改造成ROS2可以用的格式
+
+导出完如果是ROS1就可以直接编译出来用了，ROS2需要改造一下才能用。
+
+1. 把package.xml和CMakeLists.txt改成ROS2的格式：
+
+```xml
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>amorph_arm_v2_description</name>
+  <version>0.0.0</version>
+  <description>amorph_arm_v2_description</description>
+  <maintainer email="messenger@lunariio.work">lunarifish</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>joint_state_publisher_gui</exec_depend>
+  <exec_depend>hardware_interface</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>xacro</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+```
+
+```cmake
+cmake_minimum_required(VERSION 3.11)
+project(amorph_arm_v2_description)
+
+find_package(ament_cmake REQUIRED)
+
+install(
+  DIRECTORY config launch meshes urdf
+  DESTINATION share/${PROJECT_NAME}
+)
+
+ament_package()
+```
+
+2. launch文件夹里有两个ROS1的launch文件，改成一个启动rviz2显示机器人模型的ROS2格式的launch文件：
+
+```python
+import os
+
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import Command, FindExecutable, PathJoinSubstitution, LaunchConfiguration
+
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+
+from ament_index_python.packages import get_package_share_directory
+
+def generate_launch_description():
+    declared_arguments = []
+
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "description_package",
+            default_value="amorph_arm_v2_description",
+            description="Description package with robot URDF/xacro files. Usually the argument 
+        is not set, it enables use of a custom description.",
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "description_file",
+            default_value="amorph.urdf.xacro",
+            description="URDF/XACRO description file with the robot.",
+        )
+    )
+
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "gui",
+            default_value="true",
+            description="Start Rviz2 and Joint State Publisher gui automatically 
+        with this launch file.",
+        )
+    )
+
+    description_package = LaunchConfiguration("description_package")
+    description_file = LaunchConfiguration("description_file")
+    gui = LaunchConfiguration("gui")
+    
+    package_share_directory = get_package_share_directory(
+        "amorph_arm_v2_description")
+    ## rviz_config_file = os.path.join(package_share_directory, "rviz", "default.rviz")
+
+    robot_description_content = Command(
+        [
+            PathJoinSubstitution([FindExecutable(name="xacro")]),
+            " ",
+            PathJoinSubstitution(
+                [FindPackageShare(description_package),
+                 "urdf", description_file]
+            ),
+        ]
+    )
+    robot_description = {"robot_description": robot_description_content}
+
+    joint_state_publisher_node = Node(
+        package="joint_state_publisher_gui",
+        executable="joint_state_publisher_gui",
+        condition=IfCondition(gui),
+    )
+    robot_state_publisher_node = Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        output="both",
+        parameters=[robot_description],
+    )
+    rviz_node = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        output="log",
+        condition=IfCondition(gui),
+        ## arguments=["-d", rviz_config_file],
+    )
+
+    nodes = [
+        joint_state_publisher_node,
+        robot_state_publisher_node,
+        rviz_node,
+    ]
+
+    ## Launch!
+    return LaunchDescription(declared_arguments + nodes)
+```
+
+3. 把urdf模型改成一个xacro模型。在urdf的\<robot\>标签里加一行（xmlns那一行）：
+
+```xml
+<robot
+  xmlns:xacro="http://www.ros.org/wiki/xacro"
+  name="amorph_arm_v2_description">
+```
+
+然后把这个xxx.urdf文件名改成xxx.urdf.xacro。
+
+新建一个xxx.xacro文件引用这个urdf.xacro文件：
+
+```xml
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="amorph">
+  <xacro:arg name="use_mock_hardware" default="false" />
+
+  <!-- base urdf -->
+  <xacro:include filename="$(find amorph_arm_v2_description)/urdf/amorph_arm_v2_description.urdf.xacro" />
+
+</robot>
+```
+
+4. 完成上面三项改动之后文件结构如下：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ZjU2NjE1MTMyNjdiM2U1MmMxYWQ3NjM0NGNhMTIyNWZfOThlZDkxYzE1NWM5NTAwNjMyNGNhMjgyNzA1ZTllNzZfSUQ6NzYwNDA4MTAyNDU1NzA5MjAzOF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+这个包应该已经能在ROS2下编译运行了，`colcon build`之后运行`ros2 launch xxx_description display.launch.py`，打开rviz之后添加一个RobotModel模块，配置一下根坐标系和话题应该就能看到机器人模型了，并且旁边还有一个joint_state_publisher_gui窗口可以传动机器人的各个关节，这个时候就可以一边转一边调整urdf文件里的关节限位还有转向定义。
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NjQwMTkzNWZiMTdhZjZjYTc5NjBhMGJkZTU4MGNlYjhfMGM5NDFiNDRhNDRjOGMzMjhhNzhkZmZlZmU0YjBkNzFfSUQ6NzYwNDA3OTk5Mzc2ODkyMjA2NF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+#### 创建moveit配置包
+
+首先需要安装moveit，图方便可以把所有名字是moveit开头的包全装上：
+
+```bash
+sudo apt update
+sudo apt install ros-$ROS_DISTRO-moveit*
+```
+
+然后安装TRAC-IK，这是一个性能比默认选项KDL要好的运动学求解器：
+
+```bash
+sudo apt install ros-jazzy-trac-ik
+```
+
+之后的内容参考官方文档一步步进行即可：https://moveit.picknik.ai/main/doc/examples/setup_assistant/setup_assistant_tutorial.html
+
+途中选择运动学求解器时选TRAC-IK，路径规划算法选RRTConnect，RRTConnect是综合应用场景和性能最好的一种算法（参考：https://planner-arena.kavrakilab.rice.edu/），夹爪group这两项都选None，因为夹爪不需要求解器，只有两个固定命令，open和close：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ODVjMDIyY2MyNTJkM2RhYzJjYTIzZjVhNjA1MmRmNzZfYzljYTA4MmNhY2M1YTIwYzExMzY2NTk2MjY4ZDM0NTNfSUQ6NzYwNDA4Mzg2OTE4MDAwNTMwOF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+另外要给夹爪设定open和close两个状态时的关节位置，设这个可以稍微随意一点，主要是要有这两个状态定义在srdf文件里：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=ZTllZTk3ZGQ1MjlkNWY0MjIwNDljYmU0YTAyNjdhNzVfODdmY2YzYjlhNGIxN2JkNjM5OTExYzI4ZGY1YTI0MTBfSUQ6NzYwNDA4NTU1NzU0Njg3OTk2NF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MjAwMzQ4NmIxNzg1N2U0ZWU4ZTlkYWRhYTFjMzUyNTRfN2EzYjdhNDdlNjliMmE0MzgyMzNlOTllOTU1OWZkM2ZfSUQ6NzYwNDA4NTM4NjgzODc3Mjk1N18xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+### 写action server
+
+规划完路径之后就需要把轨迹下发给机械臂执行，第一种方案是把轨迹从moveit里面取出来，然后后面想干什么干什么，第二种方案是把机械臂用Action server的方式接入moveit，这种方式更好，因为moveit在执行轨迹时会做一些检查，比如机械臂当前位置和规划的轨迹初位置是否重合之类的
+
+另外有一点很重要，就是MTC并没有让你把规划好的轨迹取出来的接口，如果要执行规划出来的task，就只能走action server，所以建议直接选第二种方案。
+
+具体一点说的话，就是在创建moveit config包的时候，会让你配置controller：
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NzgwMTMyMmVjNDZmYWRiOGNlY2JmNjk2NjBkZjQzZDlfNWU1OTE1Mjc5NzBmZmU2YmY1ZTQxZmI3MTgxMTVlN2ZfSUQ6NzYwNDUzOTI2NzM2MDEzMjA2NF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+以arm这组的`arm_l_controller`为例，意思就是：你要自己写一个`control_msgs::action::FollowJointTrajectory`类型，名字是`/arm_l_controller/follow_joint_trajectory`的Action Server，用来接收moveit传给机械臂的轨迹指令。接到这个指令之后，依据这个轨迹让机械臂动就好了。
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=NTA5MzY3MzZhYjE1NzRkNDUyODhlODQ2YjUyNWRhOTFfMDRhNmVkZGY4N2FlNmQyZjU4ZjdmZjZiNWU2NzJlZDhfSUQ6NzYwNDUzOTQzMzg5NDgyNDkyNF8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+写好之后，moveit就可以接管机械臂了，同理也可以把末端的夹爪组也接进去：
+
+### moveit task constructor(MTC)
+
+让机械臂去抓一个东西这个过程其实是一个比较复杂的多阶段任务，举个例子就是要先让机械臂到物体前面、手张开、再直着把手伸过去、闭合夹爪、抬起来一点、送到目标位置前面、稍微伸进去一点、然后把手松开，最后再复位。如果涉及到双臂，那就更麻烦了，会涉及到并行的阶段。
+
+![Image](https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/authcode/?code=MTY5OGYzMDJiZTg1ODIxNDVjMWFmOTc3MDRmYmNmODhfMjk0MzJhMWIzMmQ3YmJiZjJiNjNkNDg0ZDM5ODUxOGFfSUQ6NzU5MzY1MjY5ODgwMTkzMzQ5Ml8xNzgwOTQ1MDY2OjE3ODEwMzE0NjZfVjM)
+
+可以想象的到如果只给你一个从哪到哪的轨迹规划api，剩下的东西都手搓的话需要造多少轮子。（怎么把所有阶段联合起来规划最优解、量化代价、处理并行任务之间的互相干涉、阶段之间的对接...）头铁的话就去慢慢搞状态机、行为树、各种逻辑、各种并行编程、对坐标系，还有搞moveit的那一堆稀烂的api吧。至于最后时间允不允许你把这些东西做出来，那只能说祝你好运。
+
+并不是说自己做这些工作不好，这样自己造轮子确实可以带来很多灵活性，工业界+学术界这么干的人很多，而是在RM这种缺人手还要快速出成果的场景下，想把这种方案的完成度做高非常不现实。
+
+搞moveit的那群人意识到这种"task construction"问题的普遍性，所以在moveit上面又造了一层用来解决这种问题的框架，叫mtc。它的功能就是，把一个机械臂任务拆成一些普适性的"stage"，然后用户可以用定义一系列stage的方法来定义一个复杂的任务。stage之间产生的交互，mtc会帮你搞定。
+
+这个东西没有binary，不能apt install，需要从源码编译，具体怎么弄看这篇文章
+
+https://automaticaddison.com/how-to-set-up-the-moveit-2-task-constructor-ros-2-jazzy/#Install_the_MoveIt_Task_Constructor
+
+结合上面的手眼标定和6d位姿估计，编了一个取能量单元的task，效果非常帅：
+
+[2026-03-15_02-42-37.mp4]
+
+[IMG_6590.MOV]
+
+[20260102-005235.mp4]
+
+## 上下位机的RPC通信
+
+> 2026/6/9: 用CANFD总线跑RPC是错的
+
+上位机需要给下位机下发轨迹指令，因为我的debug需求所以我还要下位机可以通过给上位机发消息的方式来打log，不管是轨迹还是log字符串都是不定长的，如果你自己搓通信协议那复杂程度不亚于dji搞的那个裁判系统串口协议。除开这个你还要维护双向通信session，还有一堆乱七八糟的，这种东西其实就是ros2的那个service机制，而这种机制其实有一个更一般的名字，叫远程调用（rpc）。
+
+### rpc_core
+
+这个技术早已经成熟到不能再成熟了，有grpc、erpc等等老牌框架，但是为了简洁性所以用了一个叫rpc_core的只支持c++的框架，因为它不需要处理跨语言通信所以设计比较简单，而且它几乎自带了所有stl容器的序列化算法，用起来只需要实现一个传输层，然后就可以把各种std:vector、std::string、std::chrono等等发来发去
+
+但是它需要自己实现一个可靠的传输层，它帮你处理数据打包，你自己考虑怎么把打包好的一大串数据可靠的传给对方，这既是优点也是缺点。综合考虑易用性和可靠性我选了canfd当传输层，然后写了一个长数据包分片协议，但是因为can总线有仲裁机制，导致大量丢帧，我不管怎么设计、怎么处理特殊case都没有什么用，连接依然不稳定。
+
+### libcanard
+
+https://github.com/OpenCyphal/libcanard
+
+这个项目似乎就能解决问题，libcanard是一个专门给CAN总线设计的rpc框架，后续等我试一试
+
